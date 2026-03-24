@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Tovest Telegram Bot - Event & Check-in & Referral System
-=========================================================
+Tovest Telegram Bot - Event & Check-in & Referral System (Multilingual)
+========================================================================
 Bot quản lý event link, check-in hàng ngày, referral, quy đổi USDT.
+Hỗ trợ đa ngôn ngữ: Tiếng Việt (vi), Tiếng Anh (en), Tiếng Indonesia (id).
 Sử dụng: python-telegram-bot v20+ (async) + SQLite + JobQueue (APScheduler)
 
 Author: Manus AI
@@ -33,9 +34,10 @@ from telegram.constants import ParseMode
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUKjw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "leyleyeyy")
-EVENT_LINK = "https://tovest.com/en-US?m=botevent&c=1600000005&ext=1"
+EVENT_LINK = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+DEFAULT_LANG = "vi"  # Ngôn ngữ mặc định
 
 # Điểm check-in
 BASE_POINTS = 10
@@ -46,7 +48,6 @@ MILESTONE_BONUSES = {7: 50, 14: 120, 30: 300, 60: 700, 100: 1500}
 POINTS_PER_REDEEM = 500
 USDT_PER_REDEEM = 0.05
 
-# Group chat IDs lưu trong DB, tự động detect khi bot được add vào group
 # ============================================================
 # LOGGING
 # ============================================================
@@ -56,6 +57,653 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger("ToveBot")
+
+# ============================================================
+# HỆ THỐNG ĐA NGÔN NGỮ (i18n)
+# ============================================================
+
+LANG = {
+    # -------------------------------------------------------
+    # TIẾNG VIỆT
+    # -------------------------------------------------------
+    "vi": {
+        # --- Nút bấm (Inline Keyboard) ---
+        "btn_checkin": "✅ Check-in ngay!",
+        "btn_rules": "📋 Quy tắc",
+        "btn_join_event": "🎁 Tham gia Event Tovest",
+        "btn_redeem": "💵 Quy đổi {usdt} USDT ({points}đ)",
+
+        # --- /start ---
+        "start_welcome": (
+            "👋 Chào <b>{name}</b>!\n\n"
+            "🤖 Chào mừng đến với <b>Tovest Bot</b>!\n\n"
+            "📌 Các lệnh chính:\n"
+            "/checkin - Check-in nhận điểm\n"
+            "/myinfo - Thông tin cá nhân\n"
+            "/myreferral - Link mời bạn bè\n"
+            "/leaderboard - Bảng xếp hạng\n"
+            "/rules - Quy tắc chương trình\n"
+            "/event - Xem event link\n\n"
+            "💡 Hãy check-in mỗi ngày để tích điểm!"
+        ),
+
+        # --- /checkin ---
+        "checkin_prompt": (
+            "📅 <b>DAILY CHECK-IN</b>\n\n"
+            "Bấm nút bên dưới để check-in hôm nay!\n"
+            "🎯 +10 điểm cơ bản + streak bonus"
+        ),
+        "checkin_already": "⚠️ Bạn đã check-in hôm nay rồi!",
+        "checkin_success": "✅ <b>{name}</b> đã check-in thành công!",
+        "checkin_streak": "📊 Streak: <b>{streak} ngày</b> 🔥",
+        "checkin_points": "💰 Điểm nhận: <b>+{points}</b>",
+        "checkin_milestone": "🎉 Milestone bonus ({streak} ngày): <b>+{bonus}</b>",
+        "checkin_total_today": "📈 Tổng hôm nay: <b>+{total}</b>",
+        "checkin_total_points": "💎 Tổng điểm: <b>{points}</b>",
+
+        # --- /rules ---
+        "rules_text": (
+            "📋 <b>QUY TẮC CHƯƠNG TRÌNH TOVEST BOT</b>\n\n"
+            "<b>1. Check-in hàng ngày:</b>\n"
+            "• Mỗi ngày bấm nút ✅ Check-in để nhận điểm\n"
+            "• Mỗi user chỉ check-in được 1 lần/ngày\n"
+            "• Điểm cơ bản: <b>+10 điểm</b>\n"
+            "• Streak bonus: <b>+5 điểm</b> cho mỗi ngày liên tiếp\n"
+            "• Ví dụ: Ngày 1 = 10đ, Ngày 2 = 15đ, Ngày 3 = 20đ...\n\n"
+            "<b>2. Milestone bonus (thưởng cột mốc):</b>\n"
+            "• 7 ngày liên tiếp: <b>+50 điểm</b>\n"
+            "• 14 ngày liên tiếp: <b>+120 điểm</b>\n"
+            "• 30 ngày liên tiếp: <b>+300 điểm</b>\n"
+            "• 60 ngày liên tiếp: <b>+700 điểm</b>\n"
+            "• 100 ngày liên tiếp: <b>+1500 điểm</b>\n\n"
+            "<b>3. Mời bạn bè (Referral):</b>\n"
+            "• Chia sẻ link mời: t.me/{bot}?start=ref_USERID\n"
+            "• Bạn bè join group + check-in 3 ngày → bạn nhận <b>+10 điểm</b>\n\n"
+            "<b>4. Quy đổi USDT:</b>\n"
+            "• <b>500 điểm = 0.05 USDT</b>\n"
+            "• Trả vào tài khoản Tovest\n"
+            "• Thanh toán được xử lý mỗi thứ 2 hàng tuần\n\n"
+            "<b>5. Event link:</b>\n"
+            "• Bot tự động gửi link event vào 08:00, 12:00, 18:00, 21:00\n"
+            "• Bấm vào link để tham gia event trên Tovest\n\n"
+            "<b>6. Bảng xếp hạng:</b>\n"
+            "• Top user theo tổng điểm và streak dài nhất\n"
+            "• Cập nhật realtime qua lệnh /leaderboard"
+        ),
+
+        # --- /myinfo ---
+        "myinfo_title": "👤 <b>Thông tin của {name}</b>\n",
+        "myinfo_points": "💎 Tổng điểm: <b>{points}</b>",
+        "myinfo_streak": "🔥 Streak hiện tại: <b>{streak} ngày</b>",
+        "myinfo_checkins": "📅 Tổng ngày check-in: <b>{count}</b>",
+        "myinfo_referrals": "👥 Đã mời: <b>{count} người</b>",
+        "myinfo_redeemed": "💵 Đã quy đổi: <b>{usdt:.2f} USDT</b>",
+        "myinfo_can_redeem": "🔄 Có thể quy đổi: <b>{count} lần</b> ({usdt:.2f} USDT)",
+        "myinfo_last_checkin": "📌 Check-in cuối: {date}",
+        "myinfo_no_checkin": "Chưa check-in",
+
+        # --- Quy đổi USDT ---
+        "redeem_not_enough": "⚠️ Bạn cần ít nhất {points} điểm để quy đổi!",
+        "redeem_success": (
+            "💵 <b>Quy đổi thành công!</b>\n\n"
+            "• Đã trừ: <b>{points} điểm</b>\n"
+            "• Nhận: <b>{usdt} USDT</b>\n"
+            "• Điểm còn lại: <b>{remaining}</b>\n\n"
+            "📌 USDT sẽ được trả vào tài khoản Tovest.\n"
+            "Thanh toán xử lý mỗi thứ 2 hàng tuần."
+        ),
+
+        # --- /myreferral ---
+        "referral_link": (
+            "👥 <b>Link mời bạn bè của bạn:</b>\n\n"
+            "🔗 <code>{link}</code>\n\n"
+            "📌 Chia sẻ link này cho bạn bè.\n"
+            "Khi bạn bè join + check-in 3 ngày → bạn nhận <b>+10 điểm</b>!"
+        ),
+
+        # --- /referral_info ---
+        "referral_empty": "📭 Bạn chưa mời ai. Dùng /myreferral để lấy link mời!",
+        "referral_stats_title": "👥 <b>Thống kê mời bạn bè</b>\n",
+        "referral_stats_total": "📊 Tổng đã mời: <b>{count}</b>",
+        "referral_stats_qualified": "✅ Đã đủ 3 ngày check-in: <b>{count}</b>",
+        "referral_stats_points": "💰 Điểm từ referral: <b>{points}</b>",
+        "referral_stats_detail": "<b>Chi tiết:</b>",
+        "referral_stats_more": "... và {count} người khác",
+
+        # --- /event ---
+        "event_title": (
+            "🎉 <b>EVENT TOVEST</b>\n\n"
+            "Bấm nút bên dưới để tham gia event và nhận thưởng!"
+        ),
+        "event_click_alert": "🔗 Đang mở link event...",
+        "event_click_msg": (
+            "🎁 <b>{name}</b>, đây là link event:\n\n"
+            "👉 <a href=\"{link}\">Tham gia Event Tovest</a>\n\n"
+            "📌 Mở link trên trình duyệt để tham gia!"
+        ),
+
+        # --- /leaderboard ---
+        "lb_title": "🏆 <b>BẢNG XẾP HẠNG</b>\n",
+        "lb_top_points": "<b>💎 Top Điểm:</b>",
+        "lb_top_streak": "<b>🔥 Top Streak:</b>",
+        "lb_no_data": "Chưa có dữ liệu.",
+        "lb_points_fmt": "{medal} {name} - <b>{points}đ</b> (🔥{streak})",
+        "lb_streak_fmt": "{medal} {name} - <b>{streak} ngày</b> ({points}đ)",
+
+        # --- Admin: /stats ---
+        "admin_no_perm": "⛔ Bạn không có quyền sử dụng lệnh này.",
+        "stats_title": "📊 <b>THỐNG KÊ EVENT CLICK</b>\n",
+        "stats_total": "📈 Tổng click: <b>{count}</b>",
+        "stats_today": "📅 Hôm nay: <b>{count}</b>",
+        "stats_unique": "👥 Unique users: <b>{count}</b>",
+        "stats_top_clickers": "<b>Top clickers:</b>",
+
+        # --- Admin: /checkin_stats ---
+        "cstats_title": "📊 <b>THỐNG KÊ CHECK-IN</b>\n",
+        "cstats_users": "👥 Tổng users: <b>{count}</b>",
+        "cstats_total": "📅 Tổng check-in: <b>{count}</b>",
+        "cstats_today": "📅 Hôm nay: <b>{count}</b>",
+        "cstats_avg_streak": "🔥 Streak TB: <b>{avg:.1f} ngày</b>",
+        "cstats_max_streak": "🔥 Streak cao nhất: <b>{max} ngày</b>",
+        "cstats_total_points": "💎 Tổng điểm phát: <b>{points}</b>",
+
+        # --- Admin: /referral_stats ---
+        "rstats_title": "📊 <b>THỐNG KÊ REFERRAL</b>\n",
+        "rstats_total": "👥 Tổng referral: <b>{count}</b>",
+        "rstats_qualified": "✅ Đủ 3 ngày check-in: <b>{count}</b>",
+        "rstats_rewarded": "💰 Đã thưởng: <b>{count}</b>",
+        "rstats_top_referrers": "<b>Top người mời:</b>",
+
+        # --- Admin: /payment_report ---
+        "pay_title": "💵 <b>BÁO CÁO THANH TOÁN USDT</b>\n",
+        "pay_total_tx": "📊 Tổng giao dịch: <b>{count}</b>",
+        "pay_total_usdt": "💰 Tổng USDT: <b>{usdt:.2f}</b>",
+        "pay_detail": "<b>Chi tiết theo user:</b>",
+        "pay_no_tx": "Chưa có giao dịch nào.",
+
+        # --- Admin: /users ---
+        "users_title": "👥 <b>DANH SÁCH USER</b> (Top 50/{total})\n",
+
+        # --- Admin: /broadcast ---
+        "broadcast_usage": "📌 Cách dùng: /broadcast Nội dung tin nhắn",
+        "broadcast_header": "📢 <b>THÔNG BÁO</b>\n\n{content}",
+        "broadcast_done": "📢 Broadcast hoàn tất!\n✅ Thành công: {success}\n❌ Thất bại: {fail}",
+
+        # --- Admin: /export ---
+        "export_checkin_caption": "📊 Xuất check-in data - {date}",
+        "export_referral_caption": "📊 Xuất referral data - {date}",
+
+        # --- Scheduled jobs ---
+        "job_event": (
+            "🎉 <b>EVENT TOVEST - {time}</b>\n\n"
+            "Bấm nút bên dưới để tham gia event và nhận thưởng!\n"
+            "⏰ Khung giờ: 08:00 | 12:00 | 18:00 | 21:00"
+        ),
+        "job_reminder": (
+            "⏰ <b>NHẮC NHỞ CHECK-IN!</b>\n\n"
+            "Đừng quên check-in hôm nay để giữ streak!\n"
+            "📊 Đã có <b>{count}</b> người check-in hôm nay.\n\n"
+            "💡 Check-in liên tục để nhận bonus lớn!"
+        ),
+        "job_weekly_title": "📊 <b>BÁO CÁO HÀNG TUẦN</b>",
+        "job_weekly_date": "📅 {date}",
+        "job_weekly_users": "👥 Tổng users: <b>{count}</b>",
+        "job_weekly_checkins": "📅 Check-in 7 ngày qua: <b>{count}</b>",
+        "job_weekly_usdt": "💵 Tổng USDT đã quy đổi: <b>{usdt:.2f}</b>",
+        "job_weekly_top": "🏆 <b>TOP 10 BẢNG XẾP HẠNG:</b>",
+        "job_weekly_payment": (
+            "💵 <b>THÔNG BÁO THANH TOÁN:</b>\n"
+            "Các yêu cầu quy đổi USDT sẽ được xử lý trong tuần này.\n"
+            "Vui lòng kiểm tra tài khoản Tovest."
+        ),
+
+        # --- /setlang ---
+        "setlang_usage": (
+            "📌 Cách dùng: /setlang vi | en | id\n"
+            "• vi - Tiếng Việt\n"
+            "• en - English\n"
+            "• id - Bahasa Indonesia"
+        ),
+        "setlang_invalid": "⚠️ Ngôn ngữ không hợp lệ. Chọn: vi, en, id",
+        "setlang_success": "✅ Đã đặt ngôn ngữ: <b>{lang_name}</b>",
+        "lang_name_vi": "Tiếng Việt 🇻🇳",
+        "lang_name_en": "English 🇬🇧",
+        "lang_name_id": "Bahasa Indonesia 🇮🇩",
+    },
+
+    # -------------------------------------------------------
+    # TIẾNG ANH
+    # -------------------------------------------------------
+    "en": {
+        # --- Nút bấm ---
+        "btn_checkin": "✅ Check-in now!",
+        "btn_rules": "📋 Rules",
+        "btn_join_event": "🎁 Join Tovest Event",
+        "btn_redeem": "💵 Redeem {usdt} USDT ({points}pts)",
+
+        # --- /start ---
+        "start_welcome": (
+            "👋 Hello <b>{name}</b>!\n\n"
+            "🤖 Welcome to <b>Tovest Bot</b>!\n\n"
+            "📌 Main commands:\n"
+            "/checkin - Daily check-in for points\n"
+            "/myinfo - Personal info\n"
+            "/myreferral - Referral link\n"
+            "/leaderboard - Leaderboard\n"
+            "/rules - Program rules\n"
+            "/event - View event link\n\n"
+            "💡 Check in every day to earn points!"
+        ),
+
+        # --- /checkin ---
+        "checkin_prompt": (
+            "📅 <b>DAILY CHECK-IN</b>\n\n"
+            "Press the button below to check in today!\n"
+            "🎯 +10 base points + streak bonus"
+        ),
+        "checkin_already": "⚠️ You have already checked in today!",
+        "checkin_success": "✅ <b>{name}</b> checked in successfully!",
+        "checkin_streak": "📊 Streak: <b>{streak} days</b> 🔥",
+        "checkin_points": "💰 Points earned: <b>+{points}</b>",
+        "checkin_milestone": "🎉 Milestone bonus ({streak} days): <b>+{bonus}</b>",
+        "checkin_total_today": "📈 Total today: <b>+{total}</b>",
+        "checkin_total_points": "💎 Total points: <b>{points}</b>",
+
+        # --- /rules ---
+        "rules_text": (
+            "📋 <b>TOVEST BOT PROGRAM RULES</b>\n\n"
+            "<b>1. Daily Check-in:</b>\n"
+            "• Press ✅ Check-in button every day to earn points\n"
+            "• Each user can only check in once per day\n"
+            "• Base points: <b>+10 points</b>\n"
+            "• Streak bonus: <b>+5 points</b> for each consecutive day\n"
+            "• Example: Day 1 = 10pts, Day 2 = 15pts, Day 3 = 20pts...\n\n"
+            "<b>2. Milestone bonus:</b>\n"
+            "• 7 consecutive days: <b>+50 points</b>\n"
+            "• 14 consecutive days: <b>+120 points</b>\n"
+            "• 30 consecutive days: <b>+300 points</b>\n"
+            "• 60 consecutive days: <b>+700 points</b>\n"
+            "• 100 consecutive days: <b>+1500 points</b>\n\n"
+            "<b>3. Invite friends (Referral):</b>\n"
+            "• Share invite link: t.me/{bot}?start=ref_USERID\n"
+            "• Friend joins + checks in 3 days → you get <b>+10 points</b>\n\n"
+            "<b>4. Redeem USDT:</b>\n"
+            "• <b>500 points = 0.05 USDT</b>\n"
+            "• Paid to your Tovest account\n"
+            "• Payments processed every Monday\n\n"
+            "<b>5. Event link:</b>\n"
+            "• Bot sends event links at 08:00, 12:00, 18:00, 21:00\n"
+            "• Click the link to join events on Tovest\n\n"
+            "<b>6. Leaderboard:</b>\n"
+            "• Top users by total points and longest streak\n"
+            "• Updated in real-time via /leaderboard"
+        ),
+
+        # --- /myinfo ---
+        "myinfo_title": "👤 <b>Info of {name}</b>\n",
+        "myinfo_points": "💎 Total points: <b>{points}</b>",
+        "myinfo_streak": "🔥 Current streak: <b>{streak} days</b>",
+        "myinfo_checkins": "📅 Total check-in days: <b>{count}</b>",
+        "myinfo_referrals": "👥 Invited: <b>{count} people</b>",
+        "myinfo_redeemed": "💵 Redeemed: <b>{usdt:.2f} USDT</b>",
+        "myinfo_can_redeem": "🔄 Can redeem: <b>{count} times</b> ({usdt:.2f} USDT)",
+        "myinfo_last_checkin": "📌 Last check-in: {date}",
+        "myinfo_no_checkin": "Not yet",
+
+        # --- Quy đổi USDT ---
+        "redeem_not_enough": "⚠️ You need at least {points} points to redeem!",
+        "redeem_success": (
+            "💵 <b>Redeem successful!</b>\n\n"
+            "• Deducted: <b>{points} points</b>\n"
+            "• Received: <b>{usdt} USDT</b>\n"
+            "• Remaining points: <b>{remaining}</b>\n\n"
+            "📌 USDT will be paid to your Tovest account.\n"
+            "Payments processed every Monday."
+        ),
+
+        # --- /myreferral ---
+        "referral_link": (
+            "👥 <b>Your referral link:</b>\n\n"
+            "🔗 <code>{link}</code>\n\n"
+            "📌 Share this link with friends.\n"
+            "When they join + check in 3 days → you get <b>+10 points</b>!"
+        ),
+
+        # --- /referral_info ---
+        "referral_empty": "📭 You haven't invited anyone yet. Use /myreferral to get your link!",
+        "referral_stats_title": "👥 <b>Referral Statistics</b>\n",
+        "referral_stats_total": "📊 Total invited: <b>{count}</b>",
+        "referral_stats_qualified": "✅ Completed 3-day check-in: <b>{count}</b>",
+        "referral_stats_points": "💰 Points from referrals: <b>{points}</b>",
+        "referral_stats_detail": "<b>Details:</b>",
+        "referral_stats_more": "... and {count} more",
+
+        # --- /event ---
+        "event_title": (
+            "🎉 <b>TOVEST EVENT</b>\n\n"
+            "Press the button below to join the event and earn rewards!"
+        ),
+        "event_click_alert": "🔗 Opening event link...",
+        "event_click_msg": (
+            "🎁 <b>{name}</b>, here is the event link:\n\n"
+            "👉 <a href=\"{link}\">Join Tovest Event</a>\n\n"
+            "📌 Open the link in your browser to participate!"
+        ),
+
+        # --- /leaderboard ---
+        "lb_title": "🏆 <b>LEADERBOARD</b>\n",
+        "lb_top_points": "<b>💎 Top Points:</b>",
+        "lb_top_streak": "<b>🔥 Top Streak:</b>",
+        "lb_no_data": "No data yet.",
+        "lb_points_fmt": "{medal} {name} - <b>{points}pts</b> (🔥{streak})",
+        "lb_streak_fmt": "{medal} {name} - <b>{streak} days</b> ({points}pts)",
+
+        # --- Admin: /stats ---
+        "admin_no_perm": "⛔ You do not have permission to use this command.",
+        "stats_title": "📊 <b>EVENT CLICK STATISTICS</b>\n",
+        "stats_total": "📈 Total clicks: <b>{count}</b>",
+        "stats_today": "📅 Today: <b>{count}</b>",
+        "stats_unique": "👥 Unique users: <b>{count}</b>",
+        "stats_top_clickers": "<b>Top clickers:</b>",
+
+        # --- Admin: /checkin_stats ---
+        "cstats_title": "📊 <b>CHECK-IN STATISTICS</b>\n",
+        "cstats_users": "👥 Total users: <b>{count}</b>",
+        "cstats_total": "📅 Total check-ins: <b>{count}</b>",
+        "cstats_today": "📅 Today: <b>{count}</b>",
+        "cstats_avg_streak": "🔥 Avg streak: <b>{avg:.1f} days</b>",
+        "cstats_max_streak": "🔥 Max streak: <b>{max} days</b>",
+        "cstats_total_points": "💎 Total points issued: <b>{points}</b>",
+
+        # --- Admin: /referral_stats ---
+        "rstats_title": "📊 <b>REFERRAL STATISTICS</b>\n",
+        "rstats_total": "👥 Total referrals: <b>{count}</b>",
+        "rstats_qualified": "✅ Completed 3-day check-in: <b>{count}</b>",
+        "rstats_rewarded": "💰 Rewarded: <b>{count}</b>",
+        "rstats_top_referrers": "<b>Top referrers:</b>",
+
+        # --- Admin: /payment_report ---
+        "pay_title": "💵 <b>USDT PAYMENT REPORT</b>\n",
+        "pay_total_tx": "📊 Total transactions: <b>{count}</b>",
+        "pay_total_usdt": "💰 Total USDT: <b>{usdt:.2f}</b>",
+        "pay_detail": "<b>Details by user:</b>",
+        "pay_no_tx": "No transactions yet.",
+
+        # --- Admin: /users ---
+        "users_title": "👥 <b>USER LIST</b> (Top 50/{total})\n",
+
+        # --- Admin: /broadcast ---
+        "broadcast_usage": "📌 Usage: /broadcast Message content",
+        "broadcast_header": "📢 <b>ANNOUNCEMENT</b>\n\n{content}",
+        "broadcast_done": "📢 Broadcast complete!\n✅ Success: {success}\n❌ Failed: {fail}",
+
+        # --- Admin: /export ---
+        "export_checkin_caption": "📊 Check-in data export - {date}",
+        "export_referral_caption": "📊 Referral data export - {date}",
+
+        # --- Scheduled jobs ---
+        "job_event": (
+            "🎉 <b>TOVEST EVENT - {time}</b>\n\n"
+            "Press the button below to join the event and earn rewards!\n"
+            "⏰ Schedule: 08:00 | 12:00 | 18:00 | 21:00"
+        ),
+        "job_reminder": (
+            "⏰ <b>CHECK-IN REMINDER!</b>\n\n"
+            "Don't forget to check in today to keep your streak!\n"
+            "📊 <b>{count}</b> people have checked in today.\n\n"
+            "💡 Check in consistently for big bonuses!"
+        ),
+        "job_weekly_title": "📊 <b>WEEKLY REPORT</b>",
+        "job_weekly_date": "📅 {date}",
+        "job_weekly_users": "👥 Total users: <b>{count}</b>",
+        "job_weekly_checkins": "📅 Check-ins last 7 days: <b>{count}</b>",
+        "job_weekly_usdt": "💵 Total USDT redeemed: <b>{usdt:.2f}</b>",
+        "job_weekly_top": "🏆 <b>TOP 10 LEADERBOARD:</b>",
+        "job_weekly_payment": (
+            "💵 <b>PAYMENT NOTICE:</b>\n"
+            "USDT redemption requests will be processed this week.\n"
+            "Please check your Tovest account."
+        ),
+
+        # --- /setlang ---
+        "setlang_usage": (
+            "📌 Usage: /setlang vi | en | id\n"
+            "• vi - Tiếng Việt\n"
+            "• en - English\n"
+            "• id - Bahasa Indonesia"
+        ),
+        "setlang_invalid": "⚠️ Invalid language. Choose: vi, en, id",
+        "setlang_success": "✅ Language set to: <b>{lang_name}</b>",
+        "lang_name_vi": "Tiếng Việt 🇻🇳",
+        "lang_name_en": "English 🇬🇧",
+        "lang_name_id": "Bahasa Indonesia 🇮🇩",
+    },
+
+    # -------------------------------------------------------
+    # TIẾNG INDONESIA
+    # -------------------------------------------------------
+    "id": {
+        # --- Tombol ---
+        "btn_checkin": "✅ Check-in sekarang!",
+        "btn_rules": "📋 Aturan",
+        "btn_join_event": "🎁 Ikuti Event Tovest",
+        "btn_redeem": "💵 Tukar {usdt} USDT ({points}poin)",
+
+        # --- /start ---
+        "start_welcome": (
+            "👋 Halo <b>{name}</b>!\n\n"
+            "🤖 Selamat datang di <b>Tovest Bot</b>!\n\n"
+            "📌 Perintah utama:\n"
+            "/checkin - Check-in harian untuk poin\n"
+            "/myinfo - Info pribadi\n"
+            "/myreferral - Link referral\n"
+            "/leaderboard - Papan peringkat\n"
+            "/rules - Aturan program\n"
+            "/event - Lihat link event\n\n"
+            "💡 Check-in setiap hari untuk mengumpulkan poin!"
+        ),
+
+        # --- /checkin ---
+        "checkin_prompt": (
+            "📅 <b>CHECK-IN HARIAN</b>\n\n"
+            "Tekan tombol di bawah untuk check-in hari ini!\n"
+            "🎯 +10 poin dasar + bonus streak"
+        ),
+        "checkin_already": "⚠️ Anda sudah check-in hari ini!",
+        "checkin_success": "✅ <b>{name}</b> berhasil check-in!",
+        "checkin_streak": "📊 Streak: <b>{streak} hari</b> 🔥",
+        "checkin_points": "💰 Poin diperoleh: <b>+{points}</b>",
+        "checkin_milestone": "🎉 Bonus milestone ({streak} hari): <b>+{bonus}</b>",
+        "checkin_total_today": "📈 Total hari ini: <b>+{total}</b>",
+        "checkin_total_points": "💎 Total poin: <b>{points}</b>",
+
+        # --- /rules ---
+        "rules_text": (
+            "📋 <b>ATURAN PROGRAM TOVEST BOT</b>\n\n"
+            "<b>1. Check-in harian:</b>\n"
+            "• Tekan tombol ✅ Check-in setiap hari untuk mendapat poin\n"
+            "• Setiap user hanya bisa check-in 1 kali/hari\n"
+            "• Poin dasar: <b>+10 poin</b>\n"
+            "• Bonus streak: <b>+5 poin</b> untuk setiap hari berturut-turut\n"
+            "• Contoh: Hari 1 = 10poin, Hari 2 = 15poin, Hari 3 = 20poin...\n\n"
+            "<b>2. Bonus milestone:</b>\n"
+            "• 7 hari berturut-turut: <b>+50 poin</b>\n"
+            "• 14 hari berturut-turut: <b>+120 poin</b>\n"
+            "• 30 hari berturut-turut: <b>+300 poin</b>\n"
+            "• 60 hari berturut-turut: <b>+700 poin</b>\n"
+            "• 100 hari berturut-turut: <b>+1500 poin</b>\n\n"
+            "<b>3. Undang teman (Referral):</b>\n"
+            "• Bagikan link undangan: t.me/{bot}?start=ref_USERID\n"
+            "• Teman bergabung + check-in 3 hari → Anda dapat <b>+10 poin</b>\n\n"
+            "<b>4. Tukar USDT:</b>\n"
+            "• <b>500 poin = 0.05 USDT</b>\n"
+            "• Dibayar ke akun Tovest Anda\n"
+            "• Pembayaran diproses setiap hari Senin\n\n"
+            "<b>5. Link event:</b>\n"
+            "• Bot mengirim link event pada 08:00, 12:00, 18:00, 21:00\n"
+            "• Klik link untuk mengikuti event di Tovest\n\n"
+            "<b>6. Papan peringkat:</b>\n"
+            "• Top user berdasarkan total poin dan streak terpanjang\n"
+            "• Diperbarui realtime melalui /leaderboard"
+        ),
+
+        # --- /myinfo ---
+        "myinfo_title": "👤 <b>Info {name}</b>\n",
+        "myinfo_points": "💎 Total poin: <b>{points}</b>",
+        "myinfo_streak": "🔥 Streak saat ini: <b>{streak} hari</b>",
+        "myinfo_checkins": "📅 Total hari check-in: <b>{count}</b>",
+        "myinfo_referrals": "👥 Telah mengundang: <b>{count} orang</b>",
+        "myinfo_redeemed": "💵 Telah ditukar: <b>{usdt:.2f} USDT</b>",
+        "myinfo_can_redeem": "🔄 Dapat ditukar: <b>{count} kali</b> ({usdt:.2f} USDT)",
+        "myinfo_last_checkin": "📌 Check-in terakhir: {date}",
+        "myinfo_no_checkin": "Belum pernah",
+
+        # --- Tukar USDT ---
+        "redeem_not_enough": "⚠️ Anda membutuhkan minimal {points} poin untuk menukar!",
+        "redeem_success": (
+            "💵 <b>Penukaran berhasil!</b>\n\n"
+            "• Dikurangi: <b>{points} poin</b>\n"
+            "• Diterima: <b>{usdt} USDT</b>\n"
+            "• Sisa poin: <b>{remaining}</b>\n\n"
+            "📌 USDT akan dibayar ke akun Tovest Anda.\n"
+            "Pembayaran diproses setiap hari Senin."
+        ),
+
+        # --- /myreferral ---
+        "referral_link": (
+            "👥 <b>Link referral Anda:</b>\n\n"
+            "🔗 <code>{link}</code>\n\n"
+            "📌 Bagikan link ini ke teman Anda.\n"
+            "Ketika teman bergabung + check-in 3 hari → Anda dapat <b>+10 poin</b>!"
+        ),
+
+        # --- /referral_info ---
+        "referral_empty": "📭 Anda belum mengundang siapa pun. Gunakan /myreferral untuk mendapatkan link!",
+        "referral_stats_title": "👥 <b>Statistik Referral</b>\n",
+        "referral_stats_total": "📊 Total diundang: <b>{count}</b>",
+        "referral_stats_qualified": "✅ Sudah check-in 3 hari: <b>{count}</b>",
+        "referral_stats_points": "💰 Poin dari referral: <b>{points}</b>",
+        "referral_stats_detail": "<b>Detail:</b>",
+        "referral_stats_more": "... dan {count} orang lagi",
+
+        # --- /event ---
+        "event_title": (
+            "🎉 <b>EVENT TOVEST</b>\n\n"
+            "Tekan tombol di bawah untuk mengikuti event dan mendapat hadiah!"
+        ),
+        "event_click_alert": "🔗 Membuka link event...",
+        "event_click_msg": (
+            "🎁 <b>{name}</b>, ini link event-nya:\n\n"
+            "👉 <a href=\"{link}\">Ikuti Event Tovest</a>\n\n"
+            "📌 Buka link di browser untuk berpartisipasi!"
+        ),
+
+        # --- /leaderboard ---
+        "lb_title": "🏆 <b>PAPAN PERINGKAT</b>\n",
+        "lb_top_points": "<b>💎 Top Poin:</b>",
+        "lb_top_streak": "<b>🔥 Top Streak:</b>",
+        "lb_no_data": "Belum ada data.",
+        "lb_points_fmt": "{medal} {name} - <b>{points}poin</b> (🔥{streak})",
+        "lb_streak_fmt": "{medal} {name} - <b>{streak} hari</b> ({points}poin)",
+
+        # --- Admin: /stats ---
+        "admin_no_perm": "⛔ Anda tidak memiliki izin untuk menggunakan perintah ini.",
+        "stats_title": "📊 <b>STATISTIK KLIK EVENT</b>\n",
+        "stats_total": "📈 Total klik: <b>{count}</b>",
+        "stats_today": "📅 Hari ini: <b>{count}</b>",
+        "stats_unique": "👥 User unik: <b>{count}</b>",
+        "stats_top_clickers": "<b>Top clickers:</b>",
+
+        # --- Admin: /checkin_stats ---
+        "cstats_title": "📊 <b>STATISTIK CHECK-IN</b>\n",
+        "cstats_users": "👥 Total users: <b>{count}</b>",
+        "cstats_total": "📅 Total check-in: <b>{count}</b>",
+        "cstats_today": "📅 Hari ini: <b>{count}</b>",
+        "cstats_avg_streak": "🔥 Rata-rata streak: <b>{avg:.1f} hari</b>",
+        "cstats_max_streak": "🔥 Streak tertinggi: <b>{max} hari</b>",
+        "cstats_total_points": "💎 Total poin diberikan: <b>{points}</b>",
+
+        # --- Admin: /referral_stats ---
+        "rstats_title": "📊 <b>STATISTIK REFERRAL</b>\n",
+        "rstats_total": "👥 Total referral: <b>{count}</b>",
+        "rstats_qualified": "✅ Sudah check-in 3 hari: <b>{count}</b>",
+        "rstats_rewarded": "💰 Sudah diberi hadiah: <b>{count}</b>",
+        "rstats_top_referrers": "<b>Top pengundang:</b>",
+
+        # --- Admin: /payment_report ---
+        "pay_title": "💵 <b>LAPORAN PEMBAYARAN USDT</b>\n",
+        "pay_total_tx": "📊 Total transaksi: <b>{count}</b>",
+        "pay_total_usdt": "💰 Total USDT: <b>{usdt:.2f}</b>",
+        "pay_detail": "<b>Detail per user:</b>",
+        "pay_no_tx": "Belum ada transaksi.",
+
+        # --- Admin: /users ---
+        "users_title": "👥 <b>DAFTAR USER</b> (Top 50/{total})\n",
+
+        # --- Admin: /broadcast ---
+        "broadcast_usage": "📌 Cara pakai: /broadcast Isi pesan",
+        "broadcast_header": "📢 <b>PENGUMUMAN</b>\n\n{content}",
+        "broadcast_done": "📢 Broadcast selesai!\n✅ Berhasil: {success}\n❌ Gagal: {fail}",
+
+        # --- Admin: /export ---
+        "export_checkin_caption": "📊 Ekspor data check-in - {date}",
+        "export_referral_caption": "📊 Ekspor data referral - {date}",
+
+        # --- Scheduled jobs ---
+        "job_event": (
+            "🎉 <b>EVENT TOVEST - {time}</b>\n\n"
+            "Tekan tombol di bawah untuk mengikuti event dan mendapat hadiah!\n"
+            "⏰ Jadwal: 08:00 | 12:00 | 18:00 | 21:00"
+        ),
+        "job_reminder": (
+            "⏰ <b>PENGINGAT CHECK-IN!</b>\n\n"
+            "Jangan lupa check-in hari ini untuk menjaga streak!\n"
+            "📊 <b>{count}</b> orang sudah check-in hari ini.\n\n"
+            "💡 Check-in terus-menerus untuk bonus besar!"
+        ),
+        "job_weekly_title": "📊 <b>LAPORAN MINGGUAN</b>",
+        "job_weekly_date": "📅 {date}",
+        "job_weekly_users": "👥 Total users: <b>{count}</b>",
+        "job_weekly_checkins": "📅 Check-in 7 hari terakhir: <b>{count}</b>",
+        "job_weekly_usdt": "💵 Total USDT ditukar: <b>{usdt:.2f}</b>",
+        "job_weekly_top": "🏆 <b>TOP 10 PAPAN PERINGKAT:</b>",
+        "job_weekly_payment": (
+            "💵 <b>PEMBERITAHUAN PEMBAYARAN:</b>\n"
+            "Permintaan penukaran USDT akan diproses minggu ini.\n"
+            "Silakan periksa akun Tovest Anda."
+        ),
+
+        # --- /setlang ---
+        "setlang_usage": (
+            "📌 Cara pakai: /setlang vi | en | id\n"
+            "• vi - Tiếng Việt\n"
+            "• en - English\n"
+            "• id - Bahasa Indonesia"
+        ),
+        "setlang_invalid": "⚠️ Bahasa tidak valid. Pilih: vi, en, id",
+        "setlang_success": "✅ Bahasa diatur ke: <b>{lang_name}</b>",
+        "lang_name_vi": "Tiếng Việt 🇻🇳",
+        "lang_name_en": "English 🇬🇧",
+        "lang_name_id": "Bahasa Indonesia 🇮🇩",
+    },
+}
+
+
+def get_text(key: str, lang: str = DEFAULT_LANG, **kwargs) -> str:
+    """
+    Lấy text theo ngôn ngữ. Fallback về tiếng Việt nếu key không tồn tại.
+    Hỗ trợ format string với **kwargs.
+    """
+    text = LANG.get(lang, LANG[DEFAULT_LANG]).get(key)
+    if text is None:
+        text = LANG[DEFAULT_LANG].get(key, key)
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, IndexError):
+            pass
+    return text
+
 
 # ============================================================
 # DATABASE
@@ -69,8 +717,9 @@ def get_db() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
+
 def init_db():
-    """Khởi tạo tất cả bảng cần thiết."""
+    """Khởi tạo tất cả bảng cần thiết (bao gồm bảng ngôn ngữ)."""
     conn = get_db()
     conn.executescript("""
         -- Bảng user
@@ -129,10 +778,17 @@ def init_db():
             usdt      REAL NOT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
+
+        -- Bảng lưu ngôn ngữ cho group/user (chat_id dương = user, âm = group)
+        CREATE TABLE IF NOT EXISTS lang_settings (
+            chat_id  INTEGER PRIMARY KEY,
+            lang     TEXT DEFAULT 'vi'
+        );
     """)
     conn.commit()
     conn.close()
     logger.info("Database đã khởi tạo thành công.")
+
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -142,20 +798,22 @@ def is_admin(user) -> bool:
     """Kiểm tra user có phải admin không."""
     return user.username and user.username.lower() == ADMIN_USERNAME.lower()
 
+
 def vn_today() -> str:
     """Ngày hôm nay theo giờ VN (YYYY-MM-DD)."""
     return datetime.now(VN_TZ).strftime("%Y-%m-%d")
 
+
 def vn_now() -> datetime:
     """Thời gian hiện tại theo giờ VN."""
     return datetime.now(VN_TZ)
+
 
 def get_or_create_user(user_id: int, username: str = "", full_name: str = "") -> dict:
     """Lấy hoặc tạo user mới trong DB."""
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
     if row:
-        # Cập nhật username/full_name nếu thay đổi
         conn.execute(
             "UPDATE users SET username = ?, full_name = ? WHERE user_id = ?",
             (username, full_name, user_id)
@@ -173,6 +831,7 @@ def get_or_create_user(user_id: int, username: str = "", full_name: str = "") ->
     conn.close()
     return result
 
+
 def save_group(chat_id: int, title: str = ""):
     """Lưu group chat ID vào DB."""
     conn = get_db()
@@ -183,6 +842,7 @@ def save_group(chat_id: int, title: str = ""):
     conn.commit()
     conn.close()
 
+
 def get_all_groups() -> list:
     """Lấy tất cả group IDs."""
     conn = get_db()
@@ -190,12 +850,14 @@ def get_all_groups() -> list:
     conn.close()
     return [r["chat_id"] for r in rows]
 
+
 def get_all_users() -> list:
     """Lấy tất cả user IDs."""
     conn = get_db()
     rows = conn.execute("SELECT user_id FROM users").fetchall()
     conn.close()
     return [r["user_id"] for r in rows]
+
 
 def display_name(user) -> str:
     """Tên hiển thị của user."""
@@ -205,48 +867,83 @@ def display_name(user) -> str:
         return f"@{user.username}"
     return f"User#{user.id}"
 
-# ============================================================
-# QUY TẮC
-# ============================================================
 
-RULES_TEXT = """
-📋 <b>QUY TẮC CHƯƠNG TRÌNH TOVEST BOT</b>
+# --- Hàm lấy/set ngôn ngữ ---
 
-<b>1. Check-in hàng ngày:</b>
-• Mỗi ngày bấm nút ✅ Check-in để nhận điểm
-• Mỗi user chỉ check-in được 1 lần/ngày
-• Điểm cơ bản: <b>+10 điểm</b>
-• Streak bonus: <b>+5 điểm</b> cho mỗi ngày liên tiếp
-• Ví dụ: Ngày 1 = 10đ, Ngày 2 = 15đ, Ngày 3 = 20đ...
+def get_lang(chat_id: int) -> str:
+    """Lấy ngôn ngữ đã set cho chat (group hoặc user). Mặc định 'vi'."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT lang FROM lang_settings WHERE chat_id = ?", (chat_id,)
+    ).fetchone()
+    conn.close()
+    return row["lang"] if row else DEFAULT_LANG
 
-<b>2. Milestone bonus (thưởng cột mốc):</b>
-• 7 ngày liên tiếp: <b>+50 điểm</b>
-• 14 ngày liên tiếp: <b>+120 điểm</b>
-• 30 ngày liên tiếp: <b>+300 điểm</b>
-• 60 ngày liên tiếp: <b>+700 điểm</b>
-• 100 ngày liên tiếp: <b>+1500 điểm</b>
 
-<b>3. Mời bạn bè (Referral):</b>
-• Chia sẻ link mời: t.me/{bot}?start=ref_USERID
-• Bạn bè join group + check-in 3 ngày → bạn nhận <b>+10 điểm</b>
+def set_lang(chat_id: int, lang: str):
+    """Lưu ngôn ngữ cho chat (group hoặc user)."""
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO lang_settings (chat_id, lang) VALUES (?, ?)",
+        (chat_id, lang)
+    )
+    conn.commit()
+    conn.close()
 
-<b>4. Quy đổi USDT:</b>
-• <b>500 điểm = 0.05 USDT</b>
-• Trả vào tài khoản Tovest
-• Thanh toán được xử lý mỗi thứ 2 hàng tuần
 
-<b>5. Event link:</b>
-• Bot tự động gửi link event vào 08:00, 12:00, 18:00, 21:00
-• Bấm vào link để tham gia event trên Tovest
+def chat_lang(update: Update) -> str:
+    """Lấy ngôn ngữ phù hợp: group dùng lang của group, private dùng lang của user."""
+    chat = update.effective_chat
+    if chat.type in ("group", "supergroup"):
+        return get_lang(chat.id)
+    else:
+        return get_lang(update.effective_user.id)
 
-<b>6. Bảng xếp hạng:</b>
-• Top user theo tổng điểm và streak dài nhất
-• Cập nhật realtime qua lệnh /leaderboard
-""".replace("{bot}", BOT_USERNAME)
+
+def get_group_lang(chat_id: int) -> str:
+    """Lấy ngôn ngữ của group (dùng cho scheduled jobs)."""
+    return get_lang(chat_id)
+
 
 # ============================================================
 # COMMAND HANDLERS
 # ============================================================
+
+async def cmd_setlang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xử lý /setlang - Chỉ admin @leyleyeyy mới dùng được."""
+    lang = chat_lang(update)
+
+    # Kiểm tra quyền admin
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Kiểm tra tham số
+    if not context.args:
+        await update.message.reply_text(get_text("setlang_usage", lang), parse_mode=ParseMode.HTML)
+        return
+
+    new_lang = context.args[0].lower().strip()
+    if new_lang not in ("vi", "en", "id"):
+        await update.message.reply_text(get_text("setlang_invalid", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Xác định chat_id để lưu (group hoặc private)
+    chat = update.effective_chat
+    if chat.type in ("group", "supergroup"):
+        target_id = chat.id
+    else:
+        target_id = update.effective_user.id
+
+    set_lang(target_id, new_lang)
+
+    # Lấy tên ngôn ngữ theo ngôn ngữ MỚI
+    lang_name = get_text(f"lang_name_{new_lang}", new_lang)
+    await update.message.reply_text(
+        get_text("setlang_success", new_lang, lang_name=lang_name),
+        parse_mode=ParseMode.HTML
+    )
+
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /start - Đăng ký user, xử lý referral deep link."""
@@ -268,7 +965,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             referrer_id = int(context.args[0].replace("ref_", ""))
             if referrer_id != user.id:
                 conn = get_db()
-                # Kiểm tra chưa có referral
                 existing = conn.execute(
                     "SELECT id FROM referrals WHERE referred_id = ?", (user.id,)
                 ).fetchone()
@@ -287,38 +983,29 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, IndexError):
             pass
 
-    text = (
-        f"👋 Chào <b>{display_name(user)}</b>!\n\n"
-        f"🤖 Chào mừng đến với <b>Tovest Bot</b>!\n\n"
-        f"📌 Các lệnh chính:\n"
-        f"/checkin - Check-in nhận điểm\n"
-        f"/myinfo - Thông tin cá nhân\n"
-        f"/myreferral - Link mời bạn bè\n"
-        f"/leaderboard - Bảng xếp hạng\n"
-        f"/rules - Quy tắc chương trình\n"
-        f"/event - Xem event link\n\n"
-        f"💡 Hãy check-in mỗi ngày để tích điểm!"
-    )
+    lang = chat_lang(update)
+    text = get_text("start_welcome", lang, name=display_name(user))
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xử lý /checkin - Gửi nút check-in inline."""
+    """Xử lý /checkin - Hiển thị nút check-in."""
     # Lưu group
     chat = update.effective_chat
     if chat.type in ("group", "supergroup"):
         save_group(chat.id, chat.title or "")
 
+    lang = chat_lang(update)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Check-in ngay!", callback_data="checkin")],
-        [InlineKeyboardButton("📋 Quy tắc", callback_data="rules")]
+        [InlineKeyboardButton(get_text("btn_checkin", lang), callback_data="checkin")],
+        [InlineKeyboardButton(get_text("btn_rules", lang), callback_data="rules")]
     ])
     await update.message.reply_text(
-        "📅 <b>DAILY CHECK-IN</b>\n\n"
-        "Bấm nút bên dưới để check-in hôm nay!\n"
-        "🎯 +10 điểm cơ bản + streak bonus",
+        get_text("checkin_prompt", lang),
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard
     )
+
 
 async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý callback khi user bấm nút Check-in."""
@@ -326,6 +1013,7 @@ async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user = query.from_user
     today = vn_today()
+    lang = chat_lang(update)
 
     # Tạo/cập nhật user
     u = get_or_create_user(user.id, user.username or "", user.full_name or "")
@@ -339,7 +1027,7 @@ async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()
     if existing:
         conn.close()
-        await query.answer("⚠️ Bạn đã check-in hôm nay rồi!", show_alert=True)
+        await query.answer(get_text("checkin_already", lang), show_alert=True)
         return
 
     # Tính streak
@@ -347,9 +1035,8 @@ async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if u["last_checkin"] == yesterday:
         new_streak = u["streak"] + 1
     elif u["last_checkin"] == today:
-        # Đã check-in (double check)
         conn.close()
-        await query.answer("⚠️ Bạn đã check-in hôm nay rồi!", show_alert=True)
+        await query.answer(get_text("checkin_already", lang), show_alert=True)
         return
     else:
         new_streak = 1
@@ -379,7 +1066,6 @@ async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "UPDATE referrals SET checkin_count = ? WHERE referred_id = ?",
             (new_count, user.id)
         )
-        # Nếu đủ 3 ngày check-in và chưa thưởng → thưởng người mời
         if new_count >= 3 and not ref["rewarded"]:
             conn.execute(
                 "UPDATE users SET points = points + 10 WHERE user_id = ?",
@@ -395,38 +1081,45 @@ async def callback_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     # Tạo message kết quả
-    text = (
-        f"✅ <b>{display_name(user)}</b> đã check-in thành công!\n\n"
-        f"📊 Streak: <b>{new_streak} ngày</b> 🔥\n"
-        f"💰 Điểm nhận: <b>+{points}</b>"
-    )
+    name = display_name(user)
+    text = get_text("checkin_success", lang, name=name) + "\n\n"
+    text += get_text("checkin_streak", lang, streak=new_streak) + "\n"
+    text += get_text("checkin_points", lang, points=points)
     if milestone_bonus:
-        text += f"\n🎉 Milestone bonus ({new_streak} ngày): <b>+{milestone_bonus}</b>"
-    text += f"\n📈 Tổng hôm nay: <b>+{total_points}</b>"
+        text += "\n" + get_text("checkin_milestone", lang, streak=new_streak, bonus=milestone_bonus)
+    text += "\n" + get_text("checkin_total_today", lang, total=total_points)
 
     # Lấy tổng điểm mới
     conn2 = get_db()
     row = conn2.execute("SELECT points FROM users WHERE user_id = ?", (user.id,)).fetchone()
     conn2.close()
     if row:
-        text += f"\n\n💎 Tổng điểm: <b>{row['points']}</b>"
+        text += "\n\n" + get_text("checkin_total_points", lang, points=row["points"])
 
     await query.message.reply_text(text, parse_mode=ParseMode.HTML)
+
 
 async def callback_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý callback khi user bấm nút Quy tắc."""
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text(RULES_TEXT, parse_mode=ParseMode.HTML)
+    lang = chat_lang(update)
+    rules = get_text("rules_text", lang, bot=BOT_USERNAME)
+    await query.message.reply_text(rules, parse_mode=ParseMode.HTML)
+
 
 async def cmd_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /rules - Hiển thị quy tắc."""
-    await update.message.reply_text(RULES_TEXT, parse_mode=ParseMode.HTML)
+    lang = chat_lang(update)
+    rules = get_text("rules_text", lang, bot=BOT_USERNAME)
+    await update.message.reply_text(rules, parse_mode=ParseMode.HTML)
+
 
 async def cmd_myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /myinfo - Thông tin cá nhân."""
     user = update.effective_user
     u = get_or_create_user(user.id, user.username or "", user.full_name or "")
+    lang = chat_lang(update)
 
     conn = get_db()
     total_checkins = conn.execute(
@@ -442,24 +1135,24 @@ async def cmd_myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     redeem_available = u["points"] // POINTS_PER_REDEEM
+    last_checkin = u["last_checkin"] or get_text("myinfo_no_checkin", lang)
 
-    text = (
-        f"👤 <b>Thông tin của {display_name(user)}</b>\n\n"
-        f"💎 Tổng điểm: <b>{u['points']}</b>\n"
-        f"🔥 Streak hiện tại: <b>{u['streak']} ngày</b>\n"
-        f"📅 Tổng ngày check-in: <b>{total_checkins}</b>\n"
-        f"👥 Đã mời: <b>{total_referrals} người</b>\n"
-        f"💵 Đã quy đổi: <b>{total_redeemed:.2f} USDT</b>\n"
-        f"🔄 Có thể quy đổi: <b>{redeem_available} lần</b> "
-        f"({redeem_available * USDT_PER_REDEEM:.2f} USDT)\n\n"
-        f"📌 Check-in cuối: {u['last_checkin'] or 'Chưa check-in'}"
-    )
+    text = get_text("myinfo_title", lang, name=display_name(user)) + "\n"
+    text += get_text("myinfo_points", lang, points=u["points"]) + "\n"
+    text += get_text("myinfo_streak", lang, streak=u["streak"]) + "\n"
+    text += get_text("myinfo_checkins", lang, count=total_checkins) + "\n"
+    text += get_text("myinfo_referrals", lang, count=total_referrals) + "\n"
+    text += get_text("myinfo_redeemed", lang, usdt=total_redeemed) + "\n"
+    text += get_text("myinfo_can_redeem", lang,
+                     count=redeem_available,
+                     usdt=redeem_available * USDT_PER_REDEEM) + "\n\n"
+    text += get_text("myinfo_last_checkin", lang, date=last_checkin)
 
     keyboard = None
     if redeem_available > 0:
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                f"💵 Quy đổi {USDT_PER_REDEEM} USDT ({POINTS_PER_REDEEM}đ)",
+                get_text("btn_redeem", lang, usdt=USDT_PER_REDEEM, points=POINTS_PER_REDEEM),
                 callback_data="redeem"
             )]
         ])
@@ -468,11 +1161,13 @@ async def cmd_myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, parse_mode=ParseMode.HTML, reply_markup=keyboard
     )
 
+
 async def callback_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý quy đổi USDT."""
     query = update.callback_query
     await query.answer()
     user = query.from_user
+    lang = chat_lang(update)
 
     conn = get_db()
     u = conn.execute("SELECT * FROM users WHERE user_id = ?", (user.id,)).fetchone()
@@ -480,7 +1175,7 @@ async def callback_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not u or u["points"] < POINTS_PER_REDEEM:
         conn.close()
         await query.answer(
-            f"⚠️ Bạn cần ít nhất {POINTS_PER_REDEEM} điểm để quy đổi!",
+            get_text("redeem_not_enough", lang, points=POINTS_PER_REDEEM),
             show_alert=True
         )
         return
@@ -501,32 +1196,28 @@ async def callback_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()["points"]
     conn.close()
 
-    text = (
-        f"💵 <b>Quy đổi thành công!</b>\n\n"
-        f"• Đã trừ: <b>{POINTS_PER_REDEEM} điểm</b>\n"
-        f"• Nhận: <b>{USDT_PER_REDEEM} USDT</b>\n"
-        f"• Điểm còn lại: <b>{new_points}</b>\n\n"
-        f"📌 USDT sẽ được trả vào tài khoản Tovest.\n"
-        f"Thanh toán xử lý mỗi thứ 2 hàng tuần."
-    )
+    text = get_text("redeem_success", lang,
+                    points=POINTS_PER_REDEEM,
+                    usdt=USDT_PER_REDEEM,
+                    remaining=new_points)
     await query.message.reply_text(text, parse_mode=ParseMode.HTML)
     logger.info(f"Redeem: {user.id} đổi {POINTS_PER_REDEEM}đ → {USDT_PER_REDEEM} USDT")
+
 
 async def cmd_myreferral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /myreferral - Link mời bạn bè."""
     user = update.effective_user
+    lang = chat_lang(update)
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user.id}"
-    text = (
-        f"👥 <b>Link mời bạn bè của bạn:</b>\n\n"
-        f"🔗 <code>{ref_link}</code>\n\n"
-        f"📌 Chia sẻ link này cho bạn bè.\n"
-        f"Khi bạn bè join + check-in 3 ngày → bạn nhận <b>+10 điểm</b>!"
-    )
+    text = get_text("referral_link", lang, link=ref_link)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
 
 async def cmd_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /referral_info - Thống kê mời bạn bè."""
     user = update.effective_user
+    lang = chat_lang(update)
+
     conn = get_db()
     refs = conn.execute(
         "SELECT r.*, u.username, u.full_name FROM referrals r "
@@ -537,20 +1228,18 @@ async def cmd_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if not refs:
-        await update.message.reply_text(
-            "📭 Bạn chưa mời ai. Dùng /myreferral để lấy link mời!"
-        )
+        await update.message.reply_text(get_text("referral_empty", lang))
         return
 
     total = len(refs)
     qualified = sum(1 for r in refs if r["checkin_count"] >= 3)
     points_earned = qualified * 10
 
-    text = f"👥 <b>Thống kê mời bạn bè</b>\n\n"
-    text += f"📊 Tổng đã mời: <b>{total}</b>\n"
-    text += f"✅ Đã đủ 3 ngày check-in: <b>{qualified}</b>\n"
-    text += f"💰 Điểm từ referral: <b>{points_earned}</b>\n\n"
-    text += "<b>Chi tiết:</b>\n"
+    text = get_text("referral_stats_title", lang) + "\n"
+    text += get_text("referral_stats_total", lang, count=total) + "\n"
+    text += get_text("referral_stats_qualified", lang, count=qualified) + "\n"
+    text += get_text("referral_stats_points", lang, points=points_earned) + "\n\n"
+    text += get_text("referral_stats_detail", lang) + "\n"
 
     for i, r in enumerate(refs[:20], 1):
         name = r["full_name"] or r["username"] or f"User#{r['referred_id']}"
@@ -558,26 +1247,29 @@ async def cmd_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. {name} - {status}\n"
 
     if total > 20:
-        text += f"\n... và {total - 20} người khác"
+        text += "\n" + get_text("referral_stats_more", lang, count=total - 20)
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /event - Gửi event link."""
+    lang = chat_lang(update)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎁 Tham gia Event Tovest", callback_data="event_click")],
+        [InlineKeyboardButton(get_text("btn_join_event", lang), callback_data="event_click")],
     ])
     await update.message.reply_text(
-        "🎉 <b>EVENT TOVEST</b>\n\n"
-        "Bấm nút bên dưới để tham gia event và nhận thưởng!",
+        get_text("event_title", lang),
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard
     )
+
 
 async def callback_event_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Tracking click event link và gửi link cho user."""
     query = update.callback_query
     user = query.from_user
+    lang = chat_lang(update)
 
     # Ghi nhận click
     conn = get_db()
@@ -588,17 +1280,17 @@ async def callback_event_click(update: Update, context: ContextTypes.DEFAULT_TYP
     conn.commit()
     conn.close()
 
-    await query.answer("🔗 Đang mở link event...", show_alert=False)
+    await query.answer(get_text("event_click_alert", lang), show_alert=False)
     await query.message.reply_text(
-        f"🎁 <b>{display_name(user)}</b>, đây là link event:\n\n"
-        f"👉 <a href=\"{EVENT_LINK}\">Tham gia Event Tovest</a>\n\n"
-        f"📌 Mở link trên trình duyệt để tham gia!",
+        get_text("event_click_msg", lang, name=display_name(user), link=EVENT_LINK),
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True
     )
 
+
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý /leaderboard - Bảng xếp hạng."""
+    lang = chat_lang(update)
     conn = get_db()
 
     # Top điểm
@@ -616,26 +1308,31 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     medals = ["🥇", "🥈", "🥉"]
 
-    text = "🏆 <b>BẢNG XẾP HẠNG</b>\n\n"
-    text += "<b>💎 Top Điểm:</b>\n"
+    text = get_text("lb_title", lang) + "\n"
+    text += get_text("lb_top_points", lang) + "\n"
     for i, u in enumerate(top_points):
         medal = medals[i] if i < 3 else f"{i+1}."
         name = u["full_name"] or u["username"] or f"User#{u['user_id']}"
-        text += f"{medal} {name} - <b>{u['points']}đ</b> (🔥{u['streak']})\n"
+        text += get_text("lb_points_fmt", lang,
+                         medal=medal, name=name,
+                         points=u["points"], streak=u["streak"]) + "\n"
 
     if not top_points:
-        text += "Chưa có dữ liệu.\n"
+        text += get_text("lb_no_data", lang) + "\n"
 
-    text += "\n<b>🔥 Top Streak:</b>\n"
+    text += "\n" + get_text("lb_top_streak", lang) + "\n"
     for i, u in enumerate(top_streak):
         medal = medals[i] if i < 3 else f"{i+1}."
         name = u["full_name"] or u["username"] or f"User#{u['user_id']}"
-        text += f"{medal} {name} - <b>{u['streak']} ngày</b> ({u['points']}đ)\n"
+        text += get_text("lb_streak_fmt", lang,
+                         medal=medal, name=name,
+                         streak=u["streak"], points=u["points"]) + "\n"
 
     if not top_streak:
-        text += "Chưa có dữ liệu.\n"
+        text += get_text("lb_no_data", lang) + "\n"
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
 
 # ============================================================
 # ADMIN COMMANDS
@@ -643,8 +1340,9 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /stats - Thống kê click event."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -655,31 +1353,29 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     unique = conn.execute(
         "SELECT COUNT(DISTINCT user_id) as cnt FROM event_clicks"
     ).fetchone()["cnt"]
-
-    # Top clickers
     top = conn.execute(
         "SELECT user_id, username, COUNT(*) as cnt FROM event_clicks "
         "GROUP BY user_id ORDER BY cnt DESC LIMIT 10"
     ).fetchall()
     conn.close()
 
-    text = (
-        f"📊 <b>THỐNG KÊ EVENT CLICK</b>\n\n"
-        f"📈 Tổng click: <b>{total}</b>\n"
-        f"📅 Hôm nay: <b>{today_cnt}</b>\n"
-        f"👥 Unique users: <b>{unique}</b>\n\n"
-        f"<b>Top clickers:</b>\n"
-    )
+    text = get_text("stats_title", lang) + "\n"
+    text += get_text("stats_total", lang, count=total) + "\n"
+    text += get_text("stats_today", lang, count=today_cnt) + "\n"
+    text += get_text("stats_unique", lang, count=unique) + "\n\n"
+    text += get_text("stats_top_clickers", lang) + "\n"
     for i, r in enumerate(top, 1):
         name = r["username"] or f"User#{r['user_id']}"
         text += f"{i}. @{name} - {r['cnt']} clicks\n"
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_checkin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /checkin_stats - Thống kê check-in."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -699,21 +1395,21 @@ async def cmd_checkin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()["total"] or 0
     conn.close()
 
-    text = (
-        f"📊 <b>THỐNG KÊ CHECK-IN</b>\n\n"
-        f"👥 Tổng users: <b>{total_users}</b>\n"
-        f"📅 Tổng check-in: <b>{total_checkins}</b>\n"
-        f"📅 Hôm nay: <b>{today_checkins}</b>\n"
-        f"🔥 Streak TB: <b>{avg_streak:.1f} ngày</b>\n"
-        f"🔥 Streak cao nhất: <b>{max_streak} ngày</b>\n"
-        f"💎 Tổng điểm phát: <b>{total_points}</b>"
-    )
+    text = get_text("cstats_title", lang) + "\n"
+    text += get_text("cstats_users", lang, count=total_users) + "\n"
+    text += get_text("cstats_total", lang, count=total_checkins) + "\n"
+    text += get_text("cstats_today", lang, count=today_checkins) + "\n"
+    text += get_text("cstats_avg_streak", lang, avg=avg_streak) + "\n"
+    text += get_text("cstats_max_streak", lang, max=max_streak) + "\n"
+    text += get_text("cstats_total_points", lang, points=total_points)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
 
 async def cmd_referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /referral_stats - Thống kê referral."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -724,8 +1420,6 @@ async def cmd_referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE)
     rewarded = conn.execute(
         "SELECT COUNT(*) as cnt FROM referrals WHERE rewarded = 1"
     ).fetchone()["cnt"]
-
-    # Top referrers
     top = conn.execute(
         "SELECT r.referrer_id, u.username, u.full_name, COUNT(*) as cnt "
         "FROM referrals r LEFT JOIN users u ON r.referrer_id = u.user_id "
@@ -733,23 +1427,23 @@ async def cmd_referral_stats(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ).fetchall()
     conn.close()
 
-    text = (
-        f"📊 <b>THỐNG KÊ REFERRAL</b>\n\n"
-        f"👥 Tổng referral: <b>{total}</b>\n"
-        f"✅ Đủ 3 ngày check-in: <b>{qualified}</b>\n"
-        f"💰 Đã thưởng: <b>{rewarded}</b>\n\n"
-        f"<b>Top người mời:</b>\n"
-    )
+    text = get_text("rstats_title", lang) + "\n"
+    text += get_text("rstats_total", lang, count=total) + "\n"
+    text += get_text("rstats_qualified", lang, count=qualified) + "\n"
+    text += get_text("rstats_rewarded", lang, count=rewarded) + "\n\n"
+    text += get_text("rstats_top_referrers", lang) + "\n"
     for i, r in enumerate(top, 1):
         name = r["full_name"] or r["username"] or f"User#{r['referrer_id']}"
-        text += f"{i}. {name} - {r['cnt']} người\n"
+        text += f"{i}. {name} - {r['cnt']}\n"
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_export_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /export_checkin - Xuất CSV check-in."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -773,13 +1467,15 @@ async def cmd_export_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_document(
         document=buf,
-        caption=f"📊 Xuất check-in data - {vn_today()}"
+        caption=get_text("export_checkin_caption", lang, date=vn_today())
     )
+
 
 async def cmd_export_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /export_referral - Xuất CSV referral."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -809,13 +1505,15 @@ async def cmd_export_referral(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_document(
         document=buf,
-        caption=f"📊 Xuất referral data - {vn_today()}"
+        caption=get_text("export_referral_caption", lang, date=vn_today())
     )
+
 
 async def cmd_payment_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /payment_report - Báo cáo thanh toán USDT."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -833,25 +1531,25 @@ async def cmd_payment_report(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ).fetchall()
     conn.close()
 
-    text = (
-        f"💵 <b>BÁO CÁO THANH TOÁN USDT</b>\n\n"
-        f"📊 Tổng giao dịch: <b>{total_count}</b>\n"
-        f"💰 Tổng USDT: <b>{total_usdt:.2f}</b>\n\n"
-        f"<b>Chi tiết theo user:</b>\n"
-    )
+    text = get_text("pay_title", lang) + "\n"
+    text += get_text("pay_total_tx", lang, count=total_count) + "\n"
+    text += get_text("pay_total_usdt", lang, usdt=total_usdt) + "\n\n"
+    text += get_text("pay_detail", lang) + "\n"
     for i, r in enumerate(pending[:20], 1):
         name = r["full_name"] or r["username"] or f"User#{r['user_id']}"
-        text += f"{i}. {name} - {r['total_usdt']:.2f} USDT ({r['cnt']} lần)\n"
+        text += f"{i}. {name} - {r['total_usdt']:.2f} USDT ({r['cnt']}x)\n"
 
     if not pending:
-        text += "Chưa có giao dịch nào.\n"
+        text += get_text("pay_no_tx", lang) + "\n"
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /users - Danh sách user."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     conn = get_db()
@@ -861,26 +1559,26 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()["cnt"]
     conn.close()
 
-    text = f"👥 <b>DANH SÁCH USER</b> (Top 50/{total})\n\n"
+    text = get_text("users_title", lang, total=total) + "\n"
     for i, u in enumerate(users, 1):
         name = u["full_name"] or u["username"] or f"User#{u['user_id']}"
         text += (
-            f"{i}. {name} | {u['points']}đ | "
+            f"{i}. {name} | {u['points']}pts | "
             f"🔥{u['streak']} | ID: {u['user_id']}\n"
         )
 
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+
 async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /broadcast Nội dung - Gửi tin push cho tất cả user."""
+    lang = chat_lang(update)
     if not is_admin(update.effective_user):
-        await update.message.reply_text("⛔ Bạn không có quyền sử dụng lệnh này.")
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
     if not context.args:
-        await update.message.reply_text(
-            "📌 Cách dùng: /broadcast Nội dung tin nhắn"
-        )
+        await update.message.reply_text(get_text("broadcast_usage", lang))
         return
 
     content = " ".join(context.args)
@@ -891,7 +1589,7 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=uid,
-                text=f"📢 <b>THÔNG BÁO</b>\n\n{content}",
+                text=get_text("broadcast_header", lang, content=content),
                 parse_mode=ParseMode.HTML
             )
             success += 1
@@ -900,8 +1598,9 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Broadcast fail to {uid}: {e}")
 
     await update.message.reply_text(
-        f"📢 Broadcast hoàn tất!\n✅ Thành công: {success}\n❌ Thất bại: {fail}"
+        get_text("broadcast_done", lang, success=success, fail=fail)
     )
+
 
 # ============================================================
 # SCHEDULED JOBS (Tự động gửi vào group)
@@ -914,20 +1613,18 @@ async def job_send_event(context: ContextTypes.DEFAULT_TYPE):
         logger.info("Không có group nào để gửi event.")
         return
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎁 Tham gia Event Tovest", callback_data="event_click")]
-    ])
-
     now = vn_now().strftime("%H:%M")
     for chat_id in groups:
         try:
+            lang = get_group_lang(chat_id)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    get_text("btn_join_event", lang), callback_data="event_click"
+                )]
+            ])
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=(
-                    f"🎉 <b>EVENT TOVEST - {now}</b>\n\n"
-                    f"Bấm nút bên dưới để tham gia event và nhận thưởng!\n"
-                    f"⏰ Khung giờ: 08:00 | 12:00 | 18:00 | 21:00"
-                ),
+                text=get_text("job_event", lang, time=now),
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard
             )
@@ -935,16 +1632,12 @@ async def job_send_event(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Gửi event thất bại cho group {chat_id}: {e}")
 
+
 async def job_checkin_reminder(context: ContextTypes.DEFAULT_TYPE):
     """Job: Nhắc nhở check-in vào group."""
     groups = get_all_groups()
     if not groups:
         return
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Check-in ngay!", callback_data="checkin")],
-        [InlineKeyboardButton("📋 Quy tắc", callback_data="rules")]
-    ])
 
     conn = get_db()
     today_cnt = conn.execute(
@@ -954,19 +1647,24 @@ async def job_checkin_reminder(context: ContextTypes.DEFAULT_TYPE):
 
     for chat_id in groups:
         try:
+            lang = get_group_lang(chat_id)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    get_text("btn_checkin", lang), callback_data="checkin"
+                )],
+                [InlineKeyboardButton(
+                    get_text("btn_rules", lang), callback_data="rules"
+                )]
+            ])
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=(
-                    f"⏰ <b>NHẮC NHỞ CHECK-IN!</b>\n\n"
-                    f"Đừng quên check-in hôm nay để giữ streak!\n"
-                    f"📊 Đã có <b>{today_cnt}</b> người check-in hôm nay.\n\n"
-                    f"💡 Check-in liên tục để nhận bonus lớn!"
-                ),
+                text=get_text("job_reminder", lang, count=today_cnt),
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard
             )
         except Exception as e:
             logger.error(f"Gửi nhắc nhở thất bại cho group {chat_id}: {e}")
+
 
 async def job_weekly_report(context: ContextTypes.DEFAULT_TYPE):
     """Job: Báo cáo hàng tuần (thứ 2, 9:00 VN)."""
@@ -975,52 +1673,47 @@ async def job_weekly_report(context: ContextTypes.DEFAULT_TYPE):
         return
 
     conn = get_db()
-    # Top 10 tuần này
     top = conn.execute(
         "SELECT u.user_id, u.username, u.full_name, u.points, u.streak "
         "FROM users u ORDER BY u.points DESC LIMIT 10"
     ).fetchall()
-
-    # Thống kê tuần
     total_users = conn.execute("SELECT COUNT(*) as cnt FROM users").fetchone()["cnt"]
     week_checkins = conn.execute(
         "SELECT COUNT(*) as cnt FROM checkins "
         "WHERE date >= date('now', '-7 days')"
     ).fetchone()["cnt"]
-
-    # Thanh toán pending
     pending_usdt = conn.execute(
         "SELECT COALESCE(SUM(usdt), 0) as total FROM redemptions"
     ).fetchone()["total"]
     conn.close()
 
     medals = ["🥇", "🥈", "🥉"]
-    text = (
-        f"📊 <b>BÁO CÁO HÀNG TUẦN</b>\n"
-        f"📅 {vn_today()}\n\n"
-        f"👥 Tổng users: <b>{total_users}</b>\n"
-        f"📅 Check-in 7 ngày qua: <b>{week_checkins}</b>\n"
-        f"💵 Tổng USDT đã quy đổi: <b>{pending_usdt:.2f}</b>\n\n"
-        f"🏆 <b>TOP 10 BẢNG XẾP HẠNG:</b>\n"
-    )
-    for i, u in enumerate(top):
-        medal = medals[i] if i < 3 else f"{i+1}."
-        name = u["full_name"] or u["username"] or f"User#{u['user_id']}"
-        text += f"{medal} {name} - <b>{u['points']}đ</b> (🔥{u['streak']})\n"
-
-    text += (
-        f"\n💵 <b>THÔNG BÁO THANH TOÁN:</b>\n"
-        f"Các yêu cầu quy đổi USDT sẽ được xử lý trong tuần này.\n"
-        f"Vui lòng kiểm tra tài khoản Tovest."
-    )
 
     for chat_id in groups:
         try:
+            lang = get_group_lang(chat_id)
+            text = get_text("job_weekly_title", lang) + "\n"
+            text += get_text("job_weekly_date", lang, date=vn_today()) + "\n\n"
+            text += get_text("job_weekly_users", lang, count=total_users) + "\n"
+            text += get_text("job_weekly_checkins", lang, count=week_checkins) + "\n"
+            text += get_text("job_weekly_usdt", lang, usdt=pending_usdt) + "\n\n"
+            text += get_text("job_weekly_top", lang) + "\n"
+
+            for i, u in enumerate(top):
+                medal = medals[i] if i < 3 else f"{i+1}."
+                name = u["full_name"] or u["username"] or f"User#{u['user_id']}"
+                text += get_text("lb_points_fmt", lang,
+                                 medal=medal, name=name,
+                                 points=u["points"], streak=u["streak"]) + "\n"
+
+            text += "\n" + get_text("job_weekly_payment", lang)
+
             await context.bot.send_message(
                 chat_id=chat_id, text=text, parse_mode=ParseMode.HTML
             )
         except Exception as e:
             logger.error(f"Gửi báo cáo tuần thất bại cho group {chat_id}: {e}")
+
 
 # ============================================================
 # AUTO-DETECT GROUP
@@ -1032,6 +1725,7 @@ async def on_new_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat and chat.type in ("group", "supergroup"):
         save_group(chat.id, chat.title or "")
 
+
 # ============================================================
 # ERROR HANDLER
 # ============================================================
@@ -1039,6 +1733,7 @@ async def on_new_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Xử lý lỗi toàn cục."""
     logger.error(f"Exception: {context.error}", exc_info=context.error)
+
 
 # ============================================================
 # SETUP SCHEDULED JOBS
@@ -1075,6 +1770,7 @@ def setup_jobs(app: Application):
     )
     logger.info("Scheduled: Báo cáo hàng tuần - Thứ 2 lúc 09:00 VN")
 
+
 # ============================================================
 # SETUP BOT COMMANDS MENU
 # ============================================================
@@ -1082,17 +1778,19 @@ def setup_jobs(app: Application):
 async def post_init(app: Application):
     """Thiết lập menu commands sau khi bot khởi động."""
     commands = [
-        BotCommand("start", "Đăng ký / Bắt đầu"),
-        BotCommand("checkin", "Check-in hàng ngày"),
-        BotCommand("myinfo", "Thông tin cá nhân"),
-        BotCommand("myreferral", "Link mời bạn bè"),
-        BotCommand("referral_info", "Thống kê mời bạn bè"),
-        BotCommand("leaderboard", "Bảng xếp hạng"),
-        BotCommand("rules", "Quy tắc chương trình"),
-        BotCommand("event", "Xem event link"),
+        BotCommand("start", "Start / Register"),
+        BotCommand("checkin", "Daily check-in"),
+        BotCommand("myinfo", "My info"),
+        BotCommand("myreferral", "Referral link"),
+        BotCommand("referral_info", "Referral stats"),
+        BotCommand("leaderboard", "Leaderboard"),
+        BotCommand("rules", "Program rules"),
+        BotCommand("event", "Event link"),
+        BotCommand("setlang", "Set language (admin)"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu đã được thiết lập.")
+
 
 # ============================================================
 # MAIN
@@ -1124,6 +1822,7 @@ def main():
     app.add_handler(CommandHandler("event", cmd_event))
 
     # Admin commands
+    app.add_handler(CommandHandler("setlang", cmd_setlang))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("checkin_stats", cmd_checkin_stats))
     app.add_handler(CommandHandler("referral_stats", cmd_referral_stats))
@@ -1157,6 +1856,7 @@ def main():
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True
     )
+
 
 if __name__ == "__main__":
     main()
