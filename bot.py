@@ -33,7 +33,7 @@ from telegram.constants import ParseMode
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUKjw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "leyleyeyy")
-EVENT_LINK = "https://tovest.com/en-US/user/reward/task?from=bonus_activity_banner"
+EVENT_LINK = "https://tovest.com/en-US?m=botevent&c=1600000005&ext=1"
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 
