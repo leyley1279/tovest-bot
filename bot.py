@@ -282,7 +282,7 @@ LANG = {
         "post_btn_join_community": "👥 Join cộng đồng",
         "post_btn_contact_admin": "📞 Liên hệ admin",
         "post_btn_deposit": "💰 Nạp ngay",
-        "post_usage": "📌 Cách dùng: /post Nội dung bài viết (hỗ trợ HTML)",
+        "post_usage": "📌 đây là bản test, content của bài post",
         "post_success": "✅ Đã đăng bài vào <b>{success}</b> group!\n❌ Thất bại: <b>{fail}</b>",
         "post_no_groups": "⚠️ Chưa có group nào đăng ký.",
         "schedule_post_usage": (
