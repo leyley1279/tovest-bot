@@ -34,7 +34,7 @@ from telegram.constants import ParseMode
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUKjw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
 # Danh sách tất cả admin
-ADMIN_USERNAMES = ["leyleyeyy", "imlipark", "maichan004", "bymnguyen"]
+ADMIN_USERNAMES = ["leyleyeyy", "imlipark", "maichan004", "bymnguyen", "iouisaga"]
 EVENT_LINK = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
 
 # URLs cho inline buttons trong bài post
