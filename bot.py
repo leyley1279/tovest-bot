@@ -33,9 +33,8 @@ from telegram.constants import ParseMode
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUKjw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "leyleyeyy")
-# Danh sách user có quyền post bài (ngoài admin)
-POST_USERS = ["imlipark", "maichan004", "bymnguyen"]
+# Danh sách tất cả admin
+ADMIN_USERNAMES = ["leyleyeyy", "imlipark", "maichan004", "bymnguyen"]
 EVENT_LINK = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
 
 # URLs cho inline buttons trong bài post
@@ -916,14 +915,12 @@ def init_db():
 
 def is_admin(user) -> bool:
     """Kiểm tra user có phải admin không."""
-    return user.username and user.username.lower() == ADMIN_USERNAME.lower()
+    return user.username and user.username.lower() in ADMIN_USERNAMES
 
 
 def is_poster(user) -> bool:
     """Kiểm tra user có quyền post bài không (admin + post users)."""
-    if is_admin(user):
-        return True
-    return user.username and user.username.lower() in POST_USERS
+    return is_admin(user)
 
 
 def vn_today() -> str:
