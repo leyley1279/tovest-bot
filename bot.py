@@ -35,6 +35,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUK
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "leyleyeyy")
 EVENT_LINK = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
+
+# URLs cho inline buttons trong bài post
+POST_URL_OPEN_ACCOUNT = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
+POST_URL_JOIN_COMMUNITY = "https://t.me/+gp8TVKCz461lZDE1"
+POST_URL_CONTACT_ADMIN = "https://t.me/leyleyeyy"
+POST_URL_DEPOSIT = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
+
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")
 DEFAULT_LANG = "vi"  # Ngôn ngữ mặc định
@@ -270,6 +277,36 @@ LANG = {
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
 
+        # --- Post bài vào group ---
+        "post_btn_open_account": "📋 Mở tài khoản",
+        "post_btn_join_community": "👥 Join cộng đồng",
+        "post_btn_contact_admin": "📞 Liên hệ admin",
+        "post_btn_deposit": "💰 Nạp ngay",
+        "post_usage": "📌 Cách dùng: /post Nội dung bài viết (hỗ trợ HTML)",
+        "post_success": "✅ Đã đăng bài vào <b>{success}</b> group!\n❌ Thất bại: <b>{fail}</b>",
+        "post_no_groups": "⚠️ Chưa có group nào đăng ký.",
+        "schedule_post_usage": (
+            "📌 Cách dùng: /schedule_post HH:MM Nội dung bài viết\n"
+            "Ví dụ: /schedule_post 14:30 Nội dung bài"
+        ),
+        "schedule_post_invalid_time": (
+            "⚠️ Định dạng giờ không hợp lệ. Dùng HH:MM (giờ VN).\n"
+            "Ví dụ: /schedule_post 14:30 Nội dung bài"
+        ),
+        "schedule_post_success": (
+            "✅ Đã hẹn giờ đăng bài!\n"
+            "🆔 ID: <b>{post_id}</b>\n"
+            "⏰ Thời gian: <b>{time}</b> (giờ VN)\n"
+            "📝 Nội dung: {content}"
+        ),
+        "scheduled_posts_title": "📋 <b>DANH SÁCH BÀI HẸN GIỜ</b>\n",
+        "scheduled_posts_empty": "📭 Không có bài hẹn giờ nào.",
+        "scheduled_posts_item": "🆔 <b>{post_id}</b> | ⏰ {time} | 📝 {content}",
+        "cancel_post_usage": "📌 Cách dùng: /cancel_post ID",
+        "cancel_post_not_found": "⚠️ Không tìm thấy bài hẹn giờ với ID: {post_id}",
+        "cancel_post_success": "✅ Đã hủy bài hẹn giờ ID: <b>{post_id}</b>",
+        "scheduled_post_sent": "📢 Bài hẹn giờ ID {post_id} đã gửi: ✅ {success} group, ❌ {fail} thất bại.",
+
         # --- Private reply ---
         "private_reply_sent": "✅ Thông tin đã được gửi qua tin nhắn riêng.",
         "private_reply_error": "⚠️ Không thể gửi tin nhắn riêng. Vui lòng /start bot @{bot_username} trước.",
@@ -481,6 +518,36 @@ LANG = {
         "lang_name_vi": "Tiếng Việt 🇻🇳",
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
+
+        # --- Post bài vào group ---
+        "post_btn_open_account": "📋 Open Account",
+        "post_btn_join_community": "👥 Join Community",
+        "post_btn_contact_admin": "📞 Contact Admin",
+        "post_btn_deposit": "💰 Deposit Now",
+        "post_usage": "📌 Usage: /post Post content (supports HTML)",
+        "post_success": "✅ Posted to <b>{success}</b> groups!\n❌ Failed: <b>{fail}</b>",
+        "post_no_groups": "⚠️ No registered groups found.",
+        "schedule_post_usage": (
+            "📌 Usage: /schedule_post HH:MM Post content\n"
+            "Example: /schedule_post 14:30 Post content"
+        ),
+        "schedule_post_invalid_time": (
+            "⚠️ Invalid time format. Use HH:MM (Vietnam time).\n"
+            "Example: /schedule_post 14:30 Post content"
+        ),
+        "schedule_post_success": (
+            "✅ Post scheduled!\n"
+            "🆔 ID: <b>{post_id}</b>\n"
+            "⏰ Time: <b>{time}</b> (Vietnam time)\n"
+            "📝 Content: {content}"
+        ),
+        "scheduled_posts_title": "📋 <b>SCHEDULED POSTS</b>\n",
+        "scheduled_posts_empty": "📭 No scheduled posts.",
+        "scheduled_posts_item": "🆔 <b>{post_id}</b> | ⏰ {time} | 📝 {content}",
+        "cancel_post_usage": "📌 Usage: /cancel_post ID",
+        "cancel_post_not_found": "⚠️ Scheduled post not found with ID: {post_id}",
+        "cancel_post_success": "✅ Cancelled scheduled post ID: <b>{post_id}</b>",
+        "scheduled_post_sent": "📢 Scheduled post ID {post_id} sent: ✅ {success} groups, ❌ {fail} failed.",
 
         # --- Private reply ---
         "private_reply_sent": "✅ Info has been sent to your private chat.",
@@ -694,6 +761,36 @@ LANG = {
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
 
+        # --- Post bài vào group ---
+        "post_btn_open_account": "📋 Buka Akun",
+        "post_btn_join_community": "👥 Gabung Komunitas",
+        "post_btn_contact_admin": "📞 Hubungi Admin",
+        "post_btn_deposit": "💰 Deposit Sekarang",
+        "post_usage": "📌 Cara pakai: /post Isi postingan (mendukung HTML)",
+        "post_success": "✅ Diposting ke <b>{success}</b> grup!\n❌ Gagal: <b>{fail}</b>",
+        "post_no_groups": "⚠️ Belum ada grup terdaftar.",
+        "schedule_post_usage": (
+            "📌 Cara pakai: /schedule_post HH:MM Isi postingan\n"
+            "Contoh: /schedule_post 14:30 Isi postingan"
+        ),
+        "schedule_post_invalid_time": (
+            "⚠️ Format waktu tidak valid. Gunakan HH:MM (waktu Vietnam).\n"
+            "Contoh: /schedule_post 14:30 Isi postingan"
+        ),
+        "schedule_post_success": (
+            "✅ Postingan dijadwalkan!\n"
+            "🆔 ID: <b>{post_id}</b>\n"
+            "⏰ Waktu: <b>{time}</b> (waktu Vietnam)\n"
+            "📝 Isi: {content}"
+        ),
+        "scheduled_posts_title": "📋 <b>DAFTAR POSTINGAN TERJADWAL</b>\n",
+        "scheduled_posts_empty": "📭 Tidak ada postingan terjadwal.",
+        "scheduled_posts_item": "🆔 <b>{post_id}</b> | ⏰ {time} | 📝 {content}",
+        "cancel_post_usage": "📌 Cara pakai: /cancel_post ID",
+        "cancel_post_not_found": "⚠️ Postingan terjadwal tidak ditemukan dengan ID: {post_id}",
+        "cancel_post_success": "✅ Postingan terjadwal ID: <b>{post_id}</b> dibatalkan.",
+        "scheduled_post_sent": "📢 Postingan terjadwal ID {post_id} terkirim: ✅ {success} grup, ❌ {fail} gagal.",
+
         # --- Private reply ---
         "private_reply_sent": "✅ Info telah dikirim ke chat pribadi Anda.",
         "private_reply_error": "⚠️ Tidak bisa mengirim pesan pribadi. Silakan /start @{bot_username} terlebih dahulu.",
@@ -795,6 +892,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS lang_settings (
             chat_id  INTEGER PRIMARY KEY,
             lang     TEXT DEFAULT 'vi'
+        );
+
+        -- Bảng lưu bài hẹn giờ (scheduled posts)
+        CREATE TABLE IF NOT EXISTS scheduled_posts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            content     TEXT NOT NULL,
+            scheduled_time TEXT NOT NULL,
+            status      TEXT DEFAULT 'pending',
+            created_at  TEXT DEFAULT (datetime('now'))
         );
     """)
     conn.commit()
@@ -915,6 +1021,28 @@ def chat_lang(update: Update) -> str:
 def get_group_lang(chat_id: int) -> str:
     """Lấy ngôn ngữ của group (dùng cho scheduled jobs)."""
     return get_lang(chat_id)
+
+
+# ============================================================
+# HELPER: Tạo inline keyboard cho bài post (theo ngôn ngữ)
+# ============================================================
+
+def build_post_keyboard(lang: str) -> InlineKeyboardMarkup:
+    """Tạo 4 inline buttons cho bài post theo ngôn ngữ của group."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            get_text("post_btn_open_account", lang), url=POST_URL_OPEN_ACCOUNT
+        )],
+        [InlineKeyboardButton(
+            get_text("post_btn_join_community", lang), url=POST_URL_JOIN_COMMUNITY
+        )],
+        [InlineKeyboardButton(
+            get_text("post_btn_contact_admin", lang), url=POST_URL_CONTACT_ADMIN
+        )],
+        [InlineKeyboardButton(
+            get_text("post_btn_deposit", lang), url=POST_URL_DEPOSIT
+        )],
+    ])
 
 
 # ============================================================
@@ -1649,6 +1777,243 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+# ADMIN: POST BÀI VÀO GROUP
+# ============================================================
+
+async def _send_post_to_groups(bot, content: str) -> tuple:
+    """
+    Gửi bài post vào tất cả group đã đăng ký.
+    Mỗi group hiển thị button theo ngôn ngữ của group đó.
+    Trả về (success, fail).
+    """
+    groups = get_all_groups()
+    success, fail = 0, 0
+    for chat_id in groups:
+        try:
+            lang = get_group_lang(chat_id)
+            keyboard = build_post_keyboard(lang)
+            await bot.send_message(
+                chat_id=chat_id,
+                text=content,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                disable_web_page_preview=True
+            )
+            success += 1
+        except Exception as e:
+            fail += 1
+            logger.error(f"Post thất bại cho group {chat_id}: {e}")
+    return success, fail
+
+
+async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /post Nội dung - Đăng bài ngay lập tức vào tất cả group."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args:
+        await update.message.reply_text(get_text("post_usage", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Lấy nội dung bài post (giữ nguyên HTML)
+    content = update.message.text.split(None, 1)[1]
+
+    groups = get_all_groups()
+    if not groups:
+        await update.message.reply_text(get_text("post_no_groups", lang), parse_mode=ParseMode.HTML)
+        return
+
+    success, fail = await _send_post_to_groups(context.bot, content)
+    await update.message.reply_text(
+        get_text("post_success", lang, success=success, fail=fail),
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Admin post: {success} thành công, {fail} thất bại")
+
+
+async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /schedule_post HH:MM Nội dung - Hẹn giờ đăng bài (giờ VN)."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(get_text("schedule_post_usage", lang), parse_mode=ParseMode.HTML)
+        return
+
+    time_str = context.args[0]
+
+    # Parse thời gian HH:MM
+    try:
+        hour, minute = map(int, time_str.split(":"))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except (ValueError, AttributeError):
+        await update.message.reply_text(
+            get_text("schedule_post_invalid_time", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Lấy nội dung bài post (bỏ phần lệnh và thời gian)
+    raw_text = update.message.text.split(None, 2)
+    if len(raw_text) < 3:
+        await update.message.reply_text(get_text("schedule_post_usage", lang), parse_mode=ParseMode.HTML)
+        return
+    content = raw_text[2]
+
+    # Tính thời gian chạy: hôm nay hoặc ngày mai (nếu giờ đã qua)
+    now = vn_now()
+    scheduled_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if scheduled_dt <= now:
+        scheduled_dt += timedelta(days=1)  # Chuyển sang ngày mai
+
+    scheduled_time_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
+
+    # Lưu vào DB
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO scheduled_posts (content, scheduled_time) VALUES (?, ?)",
+        (content, scheduled_time_str)
+    )
+    post_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Tính delay (giây) và đăng ký job
+    delay = (scheduled_dt - now).total_seconds()
+    context.application.job_queue.run_once(
+        _job_execute_scheduled_post,
+        when=delay,
+        name=f"sched_post_{post_id}",
+        data={"post_id": post_id, "content": content}
+    )
+
+    # TrỪ nội dung dài cho hiển thị
+    preview = content[:100] + ("..." if len(content) > 100 else "")
+    await update.message.reply_text(
+        get_text("schedule_post_success", lang,
+                 post_id=post_id, time=scheduled_time_str, content=preview),
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Scheduled post #{post_id} lúc {scheduled_time_str}")
+
+
+async def cmd_scheduled_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /scheduled_posts - Xem danh sách bài đã hẹn giờ."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, content, scheduled_time FROM scheduled_posts "
+        "WHERE status = 'pending' ORDER BY scheduled_time ASC"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text(
+            get_text("scheduled_posts_empty", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    text = get_text("scheduled_posts_title", lang) + "\n"
+    for r in rows:
+        preview = r["content"][:60] + ("..." if len(r["content"]) > 60 else "")
+        text += get_text("scheduled_posts_item", lang,
+                         post_id=r["id"], time=r["scheduled_time"],
+                         content=preview) + "\n"
+
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+async def cmd_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /cancel_post ID - Hủy bài hẹn giờ."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args:
+        await update.message.reply_text(get_text("cancel_post_usage", lang), parse_mode=ParseMode.HTML)
+        return
+
+    try:
+        post_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text(get_text("cancel_post_usage", lang), parse_mode=ParseMode.HTML)
+        return
+
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM scheduled_posts WHERE id = ? AND status = 'pending'",
+        (post_id,)
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        await update.message.reply_text(
+            get_text("cancel_post_not_found", lang, post_id=post_id),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Cập nhật trạng thái trong DB
+    conn.execute(
+        "UPDATE scheduled_posts SET status = 'cancelled' WHERE id = ?",
+        (post_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    # Hủy job trong JobQueue
+    jobs = context.application.job_queue.get_jobs_by_name(f"sched_post_{post_id}")
+    for job in jobs:
+        job.schedule_removal()
+
+    await update.message.reply_text(
+        get_text("cancel_post_success", lang, post_id=post_id),
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Cancelled scheduled post #{post_id}")
+
+
+async def _job_execute_scheduled_post(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Job callback: Gửi bài hẹn giờ vào tất cả group.
+    Được gọi bởi JobQueue khi đến giờ.
+    """
+    data = context.job.data
+    post_id = data["post_id"]
+    content = data["content"]
+
+    # Kiểm tra trạng thái (có thể đã bị hủy)
+    conn = get_db()
+    row = conn.execute(
+        "SELECT status FROM scheduled_posts WHERE id = ?", (post_id,)
+    ).fetchone()
+    if not row or row["status"] != "pending":
+        conn.close()
+        logger.info(f"Scheduled post #{post_id} đã bị hủy hoặc không tồn tại, bỏ qua.")
+        return
+
+    # Cập nhật trạng thái thành 'sent'
+    conn.execute(
+        "UPDATE scheduled_posts SET status = 'sent' WHERE id = ?", (post_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    # Gửi bài vào tất cả group
+    success, fail = await _send_post_to_groups(context.bot, content)
+    logger.info(f"Scheduled post #{post_id} đã gửi: {success} thành công, {fail} thất bại")
+
+
+# ============================================================
 # SCHEDULED JOBS (Tự động gửi vào group)
 # ============================================================
 
@@ -1785,9 +2150,53 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # SETUP SCHEDULED JOBS
 # ============================================================
 
+def _restore_scheduled_posts(jq):
+    """
+    Khôi phục các bài hẹn giờ còn pending từ DB khi bot restart.
+    Nếu thời gian đã qua thì đánh dấu 'expired', còn lại thì đăng ký lại job.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, content, scheduled_time FROM scheduled_posts WHERE status = 'pending'"
+    ).fetchall()
+    conn.close()
+
+    now = vn_now()
+    for r in rows:
+        try:
+            scheduled_dt = datetime.strptime(r["scheduled_time"], "%Y-%m-%d %H:%M")
+            scheduled_dt = scheduled_dt.replace(tzinfo=VN_TZ)
+            delay = (scheduled_dt - now).total_seconds()
+
+            if delay <= 0:
+                # Thời gian đã qua → đánh dấu expired
+                conn2 = get_db()
+                conn2.execute(
+                    "UPDATE scheduled_posts SET status = 'expired' WHERE id = ?",
+                    (r["id"],)
+                )
+                conn2.commit()
+                conn2.close()
+                logger.info(f"Scheduled post #{r['id']} đã hết hạn, bỏ qua.")
+            else:
+                # Đăng ký lại job
+                jq.run_once(
+                    _job_execute_scheduled_post,
+                    when=delay,
+                    name=f"sched_post_{r['id']}",
+                    data={"post_id": r["id"], "content": r["content"]}
+                )
+                logger.info(f"Restored scheduled post #{r['id']} lúc {r['scheduled_time']}")
+        except Exception as e:
+            logger.error(f"Lỗi khôi phục scheduled post #{r['id']}: {e}")
+
+
 def setup_jobs(app: Application):
-    """Thiết lập tất cả scheduled jobs."""
+    """Thiết lập tất cả scheduled jobs + khôi phục bài hẹn giờ từ DB."""
     jq = app.job_queue
+
+    # --- Khôi phục scheduled posts từ DB (sau khi restart) ---
+    _restore_scheduled_posts(jq)
 
     # Event link: 08:00, 12:00, 18:00, 21:00 VN
     for hour in [8, 12, 18, 21]:
@@ -1833,6 +2242,10 @@ async def post_init(app: Application):
         BotCommand("rules", "Program rules"),
         BotCommand("event", "Event link"),
         BotCommand("setlang", "Set language (admin)"),
+        BotCommand("post", "Post to groups (admin)"),
+        BotCommand("schedule_post", "Schedule post (admin)"),
+        BotCommand("scheduled_posts", "View scheduled posts (admin)"),
+        BotCommand("cancel_post", "Cancel scheduled post (admin)"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu đã được thiết lập.")
@@ -1877,6 +2290,10 @@ def main():
     app.add_handler(CommandHandler("payment_report", cmd_payment_report))
     app.add_handler(CommandHandler("users", cmd_users))
     app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("post", cmd_post))
+    app.add_handler(CommandHandler("schedule_post", cmd_schedule_post))
+    app.add_handler(CommandHandler("scheduled_posts", cmd_scheduled_posts))
+    app.add_handler(CommandHandler("cancel_post", cmd_cancel_post))
 
     # Callback handlers (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_checkin, pattern="^checkin$"))
