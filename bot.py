@@ -283,12 +283,28 @@ LANG = {
         "post_btn_join_community": "👥 Join cộng đồng",
         "post_btn_contact_admin": "📞 Liên hệ admin",
         "post_btn_deposit": "💰 Nạp ngay",
-        "post_usage": "📌 Cách dùng: /post Nội dung bài viết (hỗ trợ HTML)",
+        "post_usage": (
+            "📌 Cách dùng:\n"
+            "/post\n"
+            "Nội dung bài viết\n"
+            "---\n"
+            "account: link mở tài khoản\n"
+            "community: link join cộng đồng\n"
+            "admin: link liên hệ admin\n"
+            "deposit: link nạp tiền\n\n"
+            "💡 Nếu không có --- thì dùng link mặc định."
+        ),
         "post_success": "✅ Đã đăng bài vào <b>{success}</b> group!\n❌ Thất bại: <b>{fail}</b>",
         "post_no_groups": "⚠️ Chưa có group nào đăng ký.",
         "schedule_post_usage": (
-            "📌 Cách dùng: /schedule_post HH:MM Nội dung bài viết\n"
-            "Ví dụ: /schedule_post 14:30 Nội dung bài"
+            "📌 Cách dùng:\n"
+            "/schedule_post HH:MM\n"
+            "Nội dung bài viết\n"
+            "---\n"
+            "account: link\n"
+            "community: link\n"
+            "admin: link\n"
+            "deposit: link"
         ),
         "schedule_post_invalid_time": (
             "⚠️ Định dạng giờ không hợp lệ. Dùng HH:MM (giờ VN).\n"
@@ -525,12 +541,28 @@ LANG = {
         "post_btn_join_community": "👥 Join Community",
         "post_btn_contact_admin": "📞 Contact Admin",
         "post_btn_deposit": "💰 Deposit Now",
-        "post_usage": "📌 Usage: /post Post content (supports HTML)",
+        "post_usage": (
+            "📌 Usage:\n"
+            "/post\n"
+            "Post content\n"
+            "---\n"
+            "account: open account link\n"
+            "community: join community link\n"
+            "admin: contact admin link\n"
+            "deposit: deposit link\n\n"
+            "💡 If no --- section, default links are used."
+        ),
         "post_success": "✅ Posted to <b>{success}</b> groups!\n❌ Failed: <b>{fail}</b>",
         "post_no_groups": "⚠️ No registered groups found.",
         "schedule_post_usage": (
-            "📌 Usage: /schedule_post HH:MM Post content\n"
-            "Example: /schedule_post 14:30 Post content"
+            "📌 Usage:\n"
+            "/schedule_post HH:MM\n"
+            "Post content\n"
+            "---\n"
+            "account: link\n"
+            "community: link\n"
+            "admin: link\n"
+            "deposit: link"
         ),
         "schedule_post_invalid_time": (
             "⚠️ Invalid time format. Use HH:MM (Vietnam time).\n"
@@ -767,12 +799,28 @@ LANG = {
         "post_btn_join_community": "👥 Gabung Komunitas",
         "post_btn_contact_admin": "📞 Hubungi Admin",
         "post_btn_deposit": "💰 Deposit Sekarang",
-        "post_usage": "📌 Cara pakai: /post Isi postingan (mendukung HTML)",
+        "post_usage": (
+            "📌 Cara pakai:\n"
+            "/post\n"
+            "Isi postingan\n"
+            "---\n"
+            "account: link buka akun\n"
+            "community: link gabung komunitas\n"
+            "admin: link hubungi admin\n"
+            "deposit: link deposit\n\n"
+            "💡 Jika tidak ada --- maka link default digunakan."
+        ),
         "post_success": "✅ Diposting ke <b>{success}</b> grup!\n❌ Gagal: <b>{fail}</b>",
         "post_no_groups": "⚠️ Belum ada grup terdaftar.",
         "schedule_post_usage": (
-            "📌 Cara pakai: /schedule_post HH:MM Isi postingan\n"
-            "Contoh: /schedule_post 14:30 Isi postingan"
+            "📌 Cara pakai:\n"
+            "/schedule_post HH:MM\n"
+            "Isi postingan\n"
+            "---\n"
+            "account: link\n"
+            "community: link\n"
+            "admin: link\n"
+            "deposit: link"
         ),
         "schedule_post_invalid_time": (
             "⚠️ Format waktu tidak valid. Gunakan HH:MM (waktu Vietnam).\n"
@@ -901,6 +949,7 @@ def init_db():
             content     TEXT NOT NULL,
             scheduled_time TEXT NOT NULL,
             status      TEXT DEFAULT 'pending',
+            links       TEXT DEFAULT NULL,
             created_at  TEXT DEFAULT (datetime('now'))
         );
     """)
@@ -1033,20 +1082,59 @@ def get_group_lang(chat_id: int) -> str:
 # HELPER: Tạo inline keyboard cho bài post (theo ngôn ngữ)
 # ============================================================
 
-def build_post_keyboard(lang: str) -> InlineKeyboardMarkup:
+def parse_post_links(text: str) -> tuple:
+    """
+    Parse nội dung bài post và custom links.
+    Format: Nội dung\n---\naccount: link\ncommunity: link\nadmin: link\ndeposit: link
+    Trả về (content, links_dict). links_dict chứa các key: account, community, admin, deposit.
+    Nếu không có --- thì dùng link mặc định.
+    """
+    links = {
+        "account": POST_URL_OPEN_ACCOUNT,
+        "community": POST_URL_JOIN_COMMUNITY,
+        "admin": POST_URL_CONTACT_ADMIN,
+        "deposit": POST_URL_DEPOSIT,
+    }
+    if "---" not in text:
+        return text.strip(), links
+
+    parts = text.split("---", 1)
+    content = parts[0].strip()
+    link_section = parts[1].strip()
+
+    for line in link_section.split("\n"):
+        line = line.strip()
+        if ":" in line:
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key in links and value:
+                links[key] = value
+
+    return content, links
+
+
+def build_post_keyboard(lang: str, links: dict = None) -> InlineKeyboardMarkup:
     """Tạo 4 inline buttons cho bài post theo ngôn ngữ của group."""
+    if links is None:
+        links = {
+            "account": POST_URL_OPEN_ACCOUNT,
+            "community": POST_URL_JOIN_COMMUNITY,
+            "admin": POST_URL_CONTACT_ADMIN,
+            "deposit": POST_URL_DEPOSIT,
+        }
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(
-            get_text("post_btn_open_account", lang), url=POST_URL_OPEN_ACCOUNT
+            get_text("post_btn_open_account", lang), url=links["account"]
         )],
         [InlineKeyboardButton(
-            get_text("post_btn_join_community", lang), url=POST_URL_JOIN_COMMUNITY
+            get_text("post_btn_join_community", lang), url=links["community"]
         )],
         [InlineKeyboardButton(
-            get_text("post_btn_contact_admin", lang), url=POST_URL_CONTACT_ADMIN
+            get_text("post_btn_contact_admin", lang), url=links["admin"]
         )],
         [InlineKeyboardButton(
-            get_text("post_btn_deposit", lang), url=POST_URL_DEPOSIT
+            get_text("post_btn_deposit", lang), url=links["deposit"]
         )],
     ])
 
@@ -1786,7 +1874,7 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN: POST BÀI VÀO GROUP
 # ============================================================
 
-async def _send_post_to_groups(bot, content: str) -> tuple:
+async def _send_post_to_groups(bot, content: str, links: dict = None) -> tuple:
     """
     Gửi bài post vào tất cả group đã đăng ký.
     Mỗi group hiển thị button theo ngôn ngữ của group đó.
@@ -1797,7 +1885,7 @@ async def _send_post_to_groups(bot, content: str) -> tuple:
     for chat_id in groups:
         try:
             lang = get_group_lang(chat_id)
-            keyboard = build_post_keyboard(lang)
+            keyboard = build_post_keyboard(lang, links)
             await bot.send_message(
                 chat_id=chat_id,
                 text=content,
@@ -1823,15 +1911,16 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text("post_usage", lang), parse_mode=ParseMode.HTML)
         return
 
-    # Lấy nội dung bài post (giữ nguyên HTML)
-    content = update.message.text.split(None, 1)[1]
+    # Lấy nội dung bài post và parse custom links
+    raw_text = update.message.text.split(None, 1)[1]
+    content, links = parse_post_links(raw_text)
 
     groups = get_all_groups()
     if not groups:
         await update.message.reply_text(get_text("post_no_groups", lang), parse_mode=ParseMode.HTML)
         return
 
-    success, fail = await _send_post_to_groups(context.bot, content)
+    success, fail = await _send_post_to_groups(context.bot, content, links)
     await update.message.reply_text(
         get_text("post_success", lang, success=success, fail=fail),
         parse_mode=ParseMode.HTML
@@ -1863,12 +1952,13 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Lấy nội dung bài post (bỏ phần lệnh và thời gian)
+    # Lấy nội dung bài post và parse custom links
     raw_text = update.message.text.split(None, 2)
     if len(raw_text) < 3:
         await update.message.reply_text(get_text("schedule_post_usage", lang), parse_mode=ParseMode.HTML)
         return
-    content = raw_text[2]
+    full_content = raw_text[2]
+    content, links = parse_post_links(full_content)
 
     # Tính thời gian chạy: hôm nay hoặc ngày mai (nếu giờ đã qua)
     now = vn_now()
@@ -1878,11 +1968,13 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     scheduled_time_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
 
-    # Lưu vào DB
+    # Lưu vào DB (lưu cả links dưới dạng JSON)
+    import json as _json
+    links_json = _json.dumps(links)
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO scheduled_posts (content, scheduled_time) VALUES (?, ?)",
-        (content, scheduled_time_str)
+        "INSERT INTO scheduled_posts (content, scheduled_time, links) VALUES (?, ?, ?)",
+        (content, scheduled_time_str, links_json)
     )
     post_id = cur.lastrowid
     conn.commit()
@@ -1894,7 +1986,7 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _job_execute_scheduled_post,
         when=delay,
         name=f"sched_post_{post_id}",
-        data={"post_id": post_id, "content": content}
+        data={"post_id": post_id, "content": content, "links": links}
     )
 
     # TrỪ nội dung dài cho hiển thị
@@ -1996,6 +2088,7 @@ async def _job_execute_scheduled_post(context: ContextTypes.DEFAULT_TYPE):
     data = context.job.data
     post_id = data["post_id"]
     content = data["content"]
+    links = data.get("links", None)
 
     # Kiểm tra trạng thái (có thể đã bị hủy)
     conn = get_db()
@@ -2015,7 +2108,7 @@ async def _job_execute_scheduled_post(context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     # Gửi bài vào tất cả group
-    success, fail = await _send_post_to_groups(context.bot, content)
+    success, fail = await _send_post_to_groups(context.bot, content, links)
     logger.info(f"Scheduled post #{post_id} đã gửi: {success} thành công, {fail} thất bại")
 
 
@@ -2161,9 +2254,10 @@ def _restore_scheduled_posts(jq):
     Khôi phục các bài hẹn giờ còn pending từ DB khi bot restart.
     Nếu thời gian đã qua thì đánh dấu 'expired', còn lại thì đăng ký lại job.
     """
+    import json as _json
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, content, scheduled_time FROM scheduled_posts WHERE status = 'pending'"
+        "SELECT id, content, scheduled_time, links FROM scheduled_posts WHERE status = 'pending'"
     ).fetchall()
     conn.close()
 
@@ -2173,6 +2267,14 @@ def _restore_scheduled_posts(jq):
             scheduled_dt = datetime.strptime(r["scheduled_time"], "%Y-%m-%d %H:%M")
             scheduled_dt = scheduled_dt.replace(tzinfo=VN_TZ)
             delay = (scheduled_dt - now).total_seconds()
+
+            # Parse links từ JSON
+            links = None
+            if r["links"]:
+                try:
+                    links = _json.loads(r["links"])
+                except Exception:
+                    pass
 
             if delay <= 0:
                 # Thời gian đã qua → đánh dấu expired
@@ -2190,7 +2292,7 @@ def _restore_scheduled_posts(jq):
                     _job_execute_scheduled_post,
                     when=delay,
                     name=f"sched_post_{r['id']}",
-                    data={"post_id": r["id"], "content": r["content"]}
+                    data={"post_id": r["id"], "content": r["content"], "links": links}
                 )
                 logger.info(f"Restored scheduled post #{r['id']} lúc {r['scheduled_time']}")
         except Exception as e:
