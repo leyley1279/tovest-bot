@@ -34,6 +34,8 @@ from telegram.constants import ParseMode
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8602851516:AAFBNXYaMbe6ujdz42nXjUCrpeRQrebUKjw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "testeventtovest_bot")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "leyleyeyy")
+# Danh sách user có quyền post bài (ngoài admin)
+POST_USERS = ["imlipark", "maichan004", "bymnguyen"]
 EVENT_LINK = "https://tovest.com/en-US?m=globalbio&c=1600000707&ext=1"
 
 # URLs cho inline buttons trong bài post
@@ -282,7 +284,7 @@ LANG = {
         "post_btn_join_community": "👥 Join cộng đồng",
         "post_btn_contact_admin": "📞 Liên hệ admin",
         "post_btn_deposit": "💰 Nạp ngay",
-        "post_usage": "📌 đây là bản test, content của bài post",
+        "post_usage": "📌 Cách dùng: /post Nội dung bài viết (hỗ trợ HTML)",
         "post_success": "✅ Đã đăng bài vào <b>{success}</b> group!\n❌ Thất bại: <b>{fail}</b>",
         "post_no_groups": "⚠️ Chưa có group nào đăng ký.",
         "schedule_post_usage": (
@@ -915,6 +917,13 @@ def init_db():
 def is_admin(user) -> bool:
     """Kiểm tra user có phải admin không."""
     return user.username and user.username.lower() == ADMIN_USERNAME.lower()
+
+
+def is_poster(user) -> bool:
+    """Kiểm tra user có quyền post bài không (admin + post users)."""
+    if is_admin(user):
+        return True
+    return user.username and user.username.lower() in POST_USERS
 
 
 def vn_today() -> str:
@@ -1834,9 +1843,9 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /schedule_post HH:MM Nội dung - Hẹn giờ đăng bài (giờ VN)."""
+    """Xử lý /schedule_post - Hẹn giờ đăng bài."""
     lang = chat_lang(update)
-    if not is_admin(update.effective_user):
+    if not is_poster(update.effective_user):
         await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
@@ -1902,9 +1911,9 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_scheduled_posts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /scheduled_posts - Xem danh sách bài đã hẹn giờ."""
+    """Xử lý /scheduled_posts - Xem danh sách bài hẹn giờ."""
     lang = chat_lang(update)
-    if not is_admin(update.effective_user):
+    if not is_poster(update.effective_user):
         await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
@@ -1932,9 +1941,9 @@ async def cmd_scheduled_posts(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def cmd_cancel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /cancel_post ID - Hủy bài hẹn giờ."""
+    """Xử lý /cancel_post - Hủy bài hẹn giờ."""
     lang = chat_lang(update)
-    if not is_admin(update.effective_user):
+    if not is_poster(update.effective_user):
         await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
         return
 
