@@ -1874,12 +1874,18 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN: POST BÀI VÀO GROUP
 # ============================================================
 
+# Lưu lỗi gần nhất để admin xem bằng /check_error
+_last_post_errors = []
+
+
 async def _send_post_to_groups(bot, content: str, links: dict = None) -> tuple:
     """
     Gửi bài post vào tất cả group đã đăng ký.
     Mỗi group hiển thị button theo ngôn ngữ của group đó.
     Trả về (success, fail).
     """
+    global _last_post_errors
+    _last_post_errors = []  # Reset lỗi mỗi lần post
     groups = get_all_groups()
     success, fail = 0, 0
     for chat_id in groups:
@@ -1896,6 +1902,14 @@ async def _send_post_to_groups(bot, content: str, links: dict = None) -> tuple:
             success += 1
         except Exception as e:
             fail += 1
+            error_msg = str(e)
+            _last_post_errors.append({
+                "chat_id": chat_id,
+                "error": error_msg,
+                "time": vn_now().strftime("%Y-%m-%d %H:%M:%S"),
+                "content_preview": content[:50],
+                "links": links,
+            })
             logger.error(f"Post thất bại cho group {chat_id}: {e}")
     return success, fail
 
@@ -1921,11 +1935,49 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     success, fail = await _send_post_to_groups(context.bot, content, links)
-    await update.message.reply_text(
-        get_text("post_success", lang, success=success, fail=fail),
-        parse_mode=ParseMode.HTML
-    )
+    result_text = get_text("post_success", lang, success=success, fail=fail)
+    if fail > 0:
+        result_text += "\n\n🔍 Dùng /check_error để xem chi tiết lỗi."
+    await update.message.reply_text(result_text, parse_mode=ParseMode.HTML)
     logger.info(f"Admin post: {success} thành công, {fail} thất bại")
+
+
+async def cmd_check_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /check_error - Xem chi tiết lỗi post gần nhất."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    if not _last_post_errors:
+        await update.message.reply_text(
+            "✅ Không có lỗi nào. Lần post gần nhất thành công hoàn toàn!",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    text = "🚨 <b>CHI TIẾT LỖI POST GẦN NHẤT</b>\n"
+    text += f"📊 Tổng lỗi: <b>{len(_last_post_errors)}</b>\n\n"
+
+    for i, err in enumerate(_last_post_errors[:10], 1):
+        text += f"<b>Lỗi {i}:</b>\n"
+        text += f"💬 Group ID: <code>{err['chat_id']}</code>\n"
+        text += f"⏰ Thời gian: {err['time']}\n"
+        text += f"❌ Lỗi: <code>{err['error'][:200]}</code>\n"
+        if err.get('links'):
+            text += f"🔗 Links: {err['links']}\n"
+        text += "\n"
+
+    if len(_last_post_errors) > 10:
+        text += f"... và {len(_last_post_errors) - 10} lỗi khác.\n"
+
+    text += "\n💡 <b>Nguyên nhân thường gặp:</b>\n"
+    text += "• Link không hợp lệ (thiếu https://)\n"
+    text += "• Bot chưa được cấp quyền admin trong group\n"
+    text += "• Bot đã bị kick khỏi group\n"
+    text += "• HTML format sai cú pháp"
+
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2354,6 +2406,7 @@ async def post_init(app: Application):
         BotCommand("schedule_post", "Schedule post (admin)"),
         BotCommand("scheduled_posts", "View scheduled posts (admin)"),
         BotCommand("cancel_post", "Cancel scheduled post (admin)"),
+        BotCommand("check_error", "Check post errors (admin)"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu đã được thiết lập.")
@@ -2402,6 +2455,7 @@ def main():
     app.add_handler(CommandHandler("schedule_post", cmd_schedule_post))
     app.add_handler(CommandHandler("scheduled_posts", cmd_scheduled_posts))
     app.add_handler(CommandHandler("cancel_post", cmd_cancel_post))
+    app.add_handler(CommandHandler("check_error", cmd_check_error))
 
     # Callback handlers (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_checkin, pattern="^checkin$"))
