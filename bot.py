@@ -269,6 +269,10 @@ LANG = {
         "lang_name_vi": "Tiếng Việt 🇻🇳",
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
+
+        # --- Private reply ---
+        "private_reply_sent": "✅ Thông tin đã được gửi qua tin nhắn riêng.",
+        "private_reply_error": "⚠️ Không thể gửi tin nhắn riêng. Vui lòng /start bot @{bot_username} trước.",
     },
 
     # -------------------------------------------------------
@@ -477,6 +481,10 @@ LANG = {
         "lang_name_vi": "Tiếng Việt 🇻🇳",
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
+
+        # --- Private reply ---
+        "private_reply_sent": "✅ Info has been sent to your private chat.",
+        "private_reply_error": "⚠️ Cannot send private message. Please /start @{bot_username} first.",
     },
 
     # -------------------------------------------------------
@@ -685,6 +693,10 @@ LANG = {
         "lang_name_vi": "Tiếng Việt 🇻🇳",
         "lang_name_en": "English 🇬🇧",
         "lang_name_id": "Bahasa Indonesia 🇮🇩",
+
+        # --- Private reply ---
+        "private_reply_sent": "✅ Info telah dikirim ke chat pribadi Anda.",
+        "private_reply_error": "⚠️ Tidak bisa mengirim pesan pribadi. Silakan /start @{bot_username} terlebih dahulu.",
     },
 }
 
@@ -1157,9 +1169,26 @@ async def cmd_myinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )]
         ])
 
-    await update.message.reply_text(
-        text, parse_mode=ParseMode.HTML, reply_markup=keyboard
-    )
+    # Nếu trong group → gửi qua chat riêng
+    if update.effective_chat.type != "private":
+        try:
+            await context.bot.send_message(
+                chat_id=user.id, text=text,
+                parse_mode=ParseMode.HTML, reply_markup=keyboard
+            )
+            await update.message.reply_text(
+                get_text("private_reply_sent", lang),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            await update.message.reply_text(
+                get_text("private_reply_error", lang, bot_username=BOT_USERNAME),
+                parse_mode=ParseMode.HTML
+            )
+    else:
+        await update.message.reply_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=keyboard
+        )
 
 
 async def callback_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1249,7 +1278,24 @@ async def cmd_referral_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if total > 20:
         text += "\n" + get_text("referral_stats_more", lang, count=total - 20)
 
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    # Nếu trong group → gửi qua chat riêng
+    if update.effective_chat.type != "private":
+        try:
+            await context.bot.send_message(
+                chat_id=user.id, text=text,
+                parse_mode=ParseMode.HTML
+            )
+            await update.message.reply_text(
+                get_text("private_reply_sent", lang),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            await update.message.reply_text(
+                get_text("private_reply_error", lang, bot_username=BOT_USERNAME),
+                parse_mode=ParseMode.HTML
+            )
+    else:
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 async def cmd_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
