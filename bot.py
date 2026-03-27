@@ -287,12 +287,15 @@ LANG = {
             "📌 Cách dùng:\n"
             "/post\n"
             "Nội dung bài viết\n"
+            "group: 1,3 (số thứ tự group, hoặc all)\n"
             "---\n"
             "account: link mở tài khoản\n"
             "community: link join cộng đồng\n"
             "admin: link liên hệ admin\n"
             "deposit: link nạp tiền\n\n"
-            "💡 Nếu không có --- thì dùng link mặc định."
+            "💡 Nếu không có --- thì dùng link mặc định.\n"
+            "💡 Nếu không có group: thì gửi tất cả.\n"
+            "💡 Dùng /list_groups để xem số thứ tự group."
         ),
         "post_success": "✅ Đã đăng bài vào <b>{success}</b> group!\n❌ Thất bại: <b>{fail}</b>",
         "post_no_groups": "⚠️ Chưa có group nào đăng ký.",
@@ -545,12 +548,15 @@ LANG = {
             "📌 Usage:\n"
             "/post\n"
             "Post content\n"
+            "group: 1,3 (group numbers, or all)\n"
             "---\n"
             "account: open account link\n"
             "community: join community link\n"
             "admin: contact admin link\n"
             "deposit: deposit link\n\n"
-            "💡 If no --- section, default links are used."
+            "💡 If no --- section, default links are used.\n"
+            "💡 If no group: line, post to all groups.\n"
+            "💡 Use /list_groups to see group numbers."
         ),
         "post_success": "✅ Posted to <b>{success}</b> groups!\n❌ Failed: <b>{fail}</b>",
         "post_no_groups": "⚠️ No registered groups found.",
@@ -803,12 +809,15 @@ LANG = {
             "📌 Cara pakai:\n"
             "/post\n"
             "Isi postingan\n"
+            "group: 1,3 (nomor grup, atau all)\n"
             "---\n"
             "account: link buka akun\n"
             "community: link gabung komunitas\n"
             "admin: link hubungi admin\n"
             "deposit: link deposit\n\n"
-            "💡 Jika tidak ada --- maka link default digunakan."
+            "💡 Jika tidak ada --- maka link default digunakan.\n"
+            "💡 Jika tidak ada group: maka kirim ke semua grup.\n"
+            "💡 Gunakan /list_groups untuk melihat nomor grup."
         ),
         "post_success": "✅ Diposting ke <b>{success}</b> grup!\n❌ Gagal: <b>{fail}</b>",
         "post_no_groups": "⚠️ Belum ada grup terdaftar.",
@@ -950,6 +959,7 @@ def init_db():
             scheduled_time TEXT NOT NULL,
             status      TEXT DEFAULT 'pending',
             links       TEXT DEFAULT NULL,
+            target_groups TEXT DEFAULT NULL,
             created_at  TEXT DEFAULT (datetime('now'))
         );
     """)
@@ -1022,6 +1032,14 @@ def get_all_groups() -> list:
     rows = conn.execute("SELECT chat_id FROM groups").fetchall()
     conn.close()
     return [r["chat_id"] for r in rows]
+
+
+def get_all_groups_info() -> list:
+    """Lấy tất cả group với ID và title."""
+    conn = get_db()
+    rows = conn.execute("SELECT chat_id, title FROM groups").fetchall()
+    conn.close()
+    return [{"chat_id": r["chat_id"], "title": r["title"]} for r in rows]
 
 
 def get_all_users() -> list:
@@ -1878,15 +1896,16 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _last_post_errors = []
 
 
-async def _send_post_to_groups(bot, content: str, links: dict = None) -> tuple:
+async def _send_post_to_groups(bot, content: str, links: dict = None, target_groups: list = None) -> tuple:
     """
-    Gửi bài post vào tất cả group đã đăng ký.
+    Gửi bài post vào group đã đăng ký.
+    target_groups: danh sách chat_id chỉ định. Nếu None thì gửi tất cả.
     Mỗi group hiển thị button theo ngôn ngữ của group đó.
     Trả về (success, fail).
     """
     global _last_post_errors
     _last_post_errors = []  # Reset lỗi mỗi lần post
-    groups = get_all_groups()
+    groups = target_groups if target_groups else get_all_groups()
     success, fail = 0, 0
     for chat_id in groups:
         try:
@@ -1914,8 +1933,67 @@ async def _send_post_to_groups(bot, content: str, links: dict = None) -> tuple:
     return success, fail
 
 
+def parse_target_groups(text: str) -> tuple:
+    """
+    Parse target groups từ nội dung bài post.
+    Format: group: 1,2,3 hoặc group: all
+    Trả về (content_without_group_line, target_group_ids_or_None).
+    """
+    lines = text.split("\n")
+    target_ids = None
+    remaining_lines = []
+    
+    for line in lines:
+        stripped = line.strip().lower()
+        if stripped.startswith("group:"):
+            value = line.split(":", 1)[1].strip()
+            if value.lower() == "all":
+                target_ids = None  # Gửi tất cả
+            else:
+                # Parse danh sách số thứ tự
+                try:
+                    indices = [int(x.strip()) for x in value.split(",") if x.strip().isdigit()]
+                    all_groups = get_all_groups_info()
+                    target_ids = []
+                    for idx in indices:
+                        if 1 <= idx <= len(all_groups):
+                            target_ids.append(all_groups[idx - 1]["chat_id"])
+                    if not target_ids:
+                        target_ids = None
+                except (ValueError, IndexError):
+                    target_ids = None
+        else:
+            remaining_lines.append(line)
+    
+    return "\n".join(remaining_lines).strip(), target_ids
+
+
+async def cmd_list_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /list_groups - Xem danh sách group kèm số thứ tự để chọn khi post."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    groups = get_all_groups_info()
+    if not groups:
+        await update.message.reply_text(get_text("post_no_groups", lang), parse_mode=ParseMode.HTML)
+        return
+
+    text = "📝 <b>DANH SÁCH GROUP</b>\n\n"
+    for i, g in enumerate(groups, 1):
+        title = g["title"] or "(không tên)"
+        text += f"<b>{i}.</b> {title}\n    ID: <code>{g['chat_id']}</code>\n\n"
+
+    text += "\n💡 <b>Cách chỉ định group khi post:</b>\n"
+    text += "Thêm dòng <code>group: 1,3</code> vào bài post\n"
+    text += "Hoặc <code>group: all</code> để gửi tất cả"
+
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
 async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /post Nội dung - Đăng bài ngay lập tức vào tất cả group."""
+    """Admin: /post Nội dung - Đăng bài vào group (chỉ định hoặc tất cả)."""
     lang = chat_lang(update)
     if not is_admin(update.effective_user):
         await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
@@ -1925,19 +2003,30 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text("post_usage", lang), parse_mode=ParseMode.HTML)
         return
 
-    # Lấy nội dung bài post và parse custom links
+    # Lấy nội dung bài post
     raw_text = update.message.text.split(None, 1)[1]
-    content, links = parse_post_links(raw_text)
+    
+    # Parse target groups (group: 1,2,3 hoặc group: all)
+    raw_text_no_group, target_groups = parse_target_groups(raw_text)
+    
+    # Parse custom links
+    content, links = parse_post_links(raw_text_no_group)
 
-    groups = get_all_groups()
-    if not groups:
+    all_groups = get_all_groups()
+    if not all_groups:
         await update.message.reply_text(get_text("post_no_groups", lang), parse_mode=ParseMode.HTML)
         return
 
-    success, fail = await _send_post_to_groups(context.bot, content, links)
+    success, fail = await _send_post_to_groups(context.bot, content, links, target_groups)
+    
+    # Hiển thị kết quả
     result_text = get_text("post_success", lang, success=success, fail=fail)
+    if target_groups:
+        result_text += f"\n🎯 Chỉ định: {len(target_groups)} group"
+    else:
+        result_text += "\n🌐 Gửi tất cả group"
     if fail > 0:
-        result_text += "\n\n🔍 Dùng /check_error để xem chi tiết lỗi."
+        result_text += "\n\n\ud83d\udd0d Dùng /check_error để xem chi tiết lỗi."
     await update.message.reply_text(result_text, parse_mode=ParseMode.HTML)
     logger.info(f"Admin post: {success} thành công, {fail} thất bại")
 
@@ -2004,13 +2093,16 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Lấy nội dung bài post và parse custom links
+    # Lấy nội dung bài post và parse custom links + target groups
     raw_text = update.message.text.split(None, 2)
     if len(raw_text) < 3:
         await update.message.reply_text(get_text("schedule_post_usage", lang), parse_mode=ParseMode.HTML)
         return
     full_content = raw_text[2]
-    content, links = parse_post_links(full_content)
+    
+    # Parse target groups
+    full_content_no_group, target_groups = parse_target_groups(full_content)
+    content, links = parse_post_links(full_content_no_group)
 
     # Tính thời gian chạy: hôm nay hoặc ngày mai (nếu giờ đã qua)
     now = vn_now()
@@ -2020,13 +2112,14 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     scheduled_time_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
 
-    # Lưu vào DB (lưu cả links dưới dạng JSON)
+    # Lưu vào DB (lưu cả links và target_groups dưới dạng JSON)
     import json as _json
     links_json = _json.dumps(links)
+    groups_json = _json.dumps(target_groups) if target_groups else None
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO scheduled_posts (content, scheduled_time, links) VALUES (?, ?, ?)",
-        (content, scheduled_time_str, links_json)
+        "INSERT INTO scheduled_posts (content, scheduled_time, links, target_groups) VALUES (?, ?, ?, ?)",
+        (content, scheduled_time_str, links_json, groups_json)
     )
     post_id = cur.lastrowid
     conn.commit()
@@ -2038,14 +2131,15 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _job_execute_scheduled_post,
         when=delay,
         name=f"sched_post_{post_id}",
-        data={"post_id": post_id, "content": content, "links": links}
+        data={"post_id": post_id, "content": content, "links": links, "target_groups": target_groups}
     )
 
     # TrỪ nội dung dài cho hiển thị
     preview = content[:100] + ("..." if len(content) > 100 else "")
+    group_info = f"\n\ud83c\udfaf Chỉ định: {len(target_groups)} group" if target_groups else "\n\ud83c\udf10 Gửi tất cả group"
     await update.message.reply_text(
         get_text("schedule_post_success", lang,
-                 post_id=post_id, time=scheduled_time_str, content=preview),
+                 post_id=post_id, time=scheduled_time_str, content=preview) + group_info,
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Scheduled post #{post_id} lúc {scheduled_time_str}")
@@ -2159,8 +2253,9 @@ async def _job_execute_scheduled_post(context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    # Gửi bài vào tất cả group
-    success, fail = await _send_post_to_groups(context.bot, content, links)
+    # Gửi bài vào group (chỉ định hoặc tất cả)
+    target_groups = data.get("target_groups", None)
+    success, fail = await _send_post_to_groups(context.bot, content, links, target_groups)
     logger.info(f"Scheduled post #{post_id} đã gửi: {success} thành công, {fail} thất bại")
 
 
@@ -2309,7 +2404,7 @@ def _restore_scheduled_posts(jq):
     import json as _json
     conn = get_db()
     rows = conn.execute(
-        "SELECT id, content, scheduled_time, links FROM scheduled_posts WHERE status = 'pending'"
+        "SELECT id, content, scheduled_time, links, target_groups FROM scheduled_posts WHERE status = 'pending'"
     ).fetchall()
     conn.close()
 
@@ -2320,11 +2415,17 @@ def _restore_scheduled_posts(jq):
             scheduled_dt = scheduled_dt.replace(tzinfo=VN_TZ)
             delay = (scheduled_dt - now).total_seconds()
 
-            # Parse links từ JSON
+            # Parse links và target_groups từ JSON
             links = None
             if r["links"]:
                 try:
                     links = _json.loads(r["links"])
+                except Exception:
+                    pass
+            target_groups = None
+            if r["target_groups"]:
+                try:
+                    target_groups = _json.loads(r["target_groups"])
                 except Exception:
                     pass
 
@@ -2344,7 +2445,7 @@ def _restore_scheduled_posts(jq):
                     _job_execute_scheduled_post,
                     when=delay,
                     name=f"sched_post_{r['id']}",
-                    data={"post_id": r["id"], "content": r["content"], "links": links}
+                    data={"post_id": r["id"], "content": r["content"], "links": links, "target_groups": target_groups}
                 )
                 logger.info(f"Restored scheduled post #{r['id']} lúc {r['scheduled_time']}")
         except Exception as e:
@@ -2407,6 +2508,7 @@ async def post_init(app: Application):
         BotCommand("scheduled_posts", "View scheduled posts (admin)"),
         BotCommand("cancel_post", "Cancel scheduled post (admin)"),
         BotCommand("check_error", "Check post errors (admin)"),
+        BotCommand("list_groups", "List groups for targeting (admin)"),
     ]
     await app.bot.set_my_commands(commands)
     logger.info("Bot commands menu đã được thiết lập.")
@@ -2456,6 +2558,7 @@ def main():
     app.add_handler(CommandHandler("scheduled_posts", cmd_scheduled_posts))
     app.add_handler(CommandHandler("cancel_post", cmd_cancel_post))
     app.add_handler(CommandHandler("check_error", cmd_check_error))
+    app.add_handler(CommandHandler("list_groups", cmd_list_groups))
 
     # Callback handlers (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_checkin, pattern="^checkin$"))
