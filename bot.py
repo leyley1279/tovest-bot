@@ -455,6 +455,13 @@ LANG = {
         "poll_force_closed": "🔒 Bình chọn #{poll_id} đã được đóng thủ công bởi admin.",
 
         "poll_time_left_fmt": "{minutes}p {seconds}s",
+
+        # --- Poll group flow (new in-group UID input) ---
+        "poll_uid_prompt_group": (
+            "🙋 <a href=\"tg://user?id={user_id}\">{name}</a>, bạn đang báo danh bình chọn <b>#{poll_id}</b>\n\n"
+            "Vui lòng nhập <b>UID Tovest</b> của bạn vào group này để tiếp tục:"
+        ),
+        "poll_uid_timeout": "⏰ Hết thời gian nhập UID. Vui lòng bấm Báo danh lại.",
     },
 
     # -------------------------------------------------------
@@ -832,6 +839,13 @@ LANG = {
         "poll_force_closed": "🔒 Poll #{poll_id} has been manually closed by admin.",
 
         "poll_time_left_fmt": "{minutes}m {seconds}s",
+
+        # --- Poll group flow (new in-group UID input) ---
+        "poll_uid_prompt_group": (
+            "🙋 <a href=\"tg://user?id={user_id}\">{name}</a>, you are registering for prediction <b>#{poll_id}</b>\n\n"
+            "Please enter your <b>Tovest UID</b> in this group to continue:"
+        ),
+        "poll_uid_timeout": "⏰ UID input timed out. Please press Register again.",
     },
 
     # -------------------------------------------------------
@@ -1209,6 +1223,13 @@ LANG = {
         "poll_force_closed": "🔒 Prediksi #{poll_id} telah ditutup secara manual oleh admin.",
 
         "poll_time_left_fmt": "{minutes}m {seconds}d",
+
+        # --- Poll group flow (new in-group UID input) ---
+        "poll_uid_prompt_group": (
+            "🙋 <a href=\"tg://user?id={user_id}\">{name}</a>, Anda mendaftar untuk prediksi <b>#{poll_id}</b>\n\n"
+            "Silakan masukkan <b>UID Tovest</b> Anda di grup ini untuk melanjutkan:"
+        ),
+        "poll_uid_timeout": "⏰ Waktu input UID habis. Silakan tekan Daftar lagi.",
     },
 }
 
@@ -2909,7 +2930,7 @@ async def cmd_create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def callback_poll_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback khi user bấm 'Báo danh' trong group."""
+    """Callback khi user bấm 'Báo danh' trong group - xử lý hoàn toàn trong group."""
     query = update.callback_query
     user = query.from_user
     data = query.data  # poll_join_{poll_id}
@@ -2934,28 +2955,32 @@ async def callback_poll_join(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer(get_text("poll_already_voted", lang), show_alert=True)
         return
 
+    # Kiểm tra user đang trong trạng thái chờ nhập UID rồi (tránh spam)
+    chat_id = update.effective_chat.id
+    pending_key = f"poll_uid_pending_{user.id}"
+    if context.chat_data.get(pending_key):
+        await query.answer(
+            get_text("poll_ask_uid", lang, poll_id=poll_id).replace("<b>", "").replace("</b>", "").split("\n")[0],
+            show_alert=True
+        )
+        return
+
     await query.answer()
 
     # Tạo/cập nhật user
     get_or_create_user(user.id, user.username or "", user.full_name or "")
 
-    # Gửi tin nhắn riêng yêu cầu nhập UID
-    user_lang = get_lang(user.id)
-    try:
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=get_text("poll_ask_uid", user_lang, poll_id=poll_id),
-            parse_mode=ParseMode.HTML
-        )
-        # Lưu trạng thái chờ nhập UID vào user_data
-        context.application.user_data.setdefault(user.id, {})
-        context.application.user_data[user.id]["poll_awaiting_uid"] = poll_id
-    except Exception:
-        # User chưa /start bot
-        await query.message.reply_text(
-            get_text("private_reply_error", lang, bot_username=BOT_USERNAME),
-            parse_mode=ParseMode.HTML
-        )
+    # Lưu trạng thái chờ nhập UID vào chat_data (theo group)
+    # Key: poll_uid_pending_{user_id} = poll_id
+    context.chat_data[pending_key] = poll_id
+
+    # Gửi yêu cầu nhập UID trong group (mention user)
+    name = display_name(user)
+    await query.message.reply_text(
+        get_text("poll_uid_prompt_group", lang,
+                 user_id=user.id, name=name, poll_id=poll_id),
+        parse_mode=ParseMode.HTML
+    )
 
 
 async def callback_poll_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3007,7 +3032,7 @@ async def callback_poll_refresh(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def callback_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback khi user chọn đáp án A/B/C/D."""
+    """Callback khi user chọn đáp án A/B/C/D trong group."""
     query = update.callback_query
     user = query.from_user
     data = query.data  # poll_answer_{poll_id}_{answer}
@@ -3015,30 +3040,36 @@ async def callback_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYP
     poll_id = int(parts[2])
     answer = parts[3].upper()
 
-    user_lang = get_lang(user.id)
+    lang = chat_lang(update)
 
     # Kiểm tra poll
     poll = get_poll_by_id(poll_id)
     if not poll or poll["status"] != "active":
-        await query.answer(get_text("poll_closed", user_lang), show_alert=True)
+        await query.answer(get_text("poll_closed", lang), show_alert=True)
         return
 
     # Kiểm tra thời gian
     time_left = get_poll_time_left_seconds(poll)
     if time_left <= 0:
-        await query.answer(get_text("poll_closed", user_lang), show_alert=True)
+        await query.answer(get_text("poll_closed", lang), show_alert=True)
         return
 
     # Kiểm tra đã vote chưa
     if has_user_voted(poll_id, user.id):
-        await query.answer(get_text("poll_already_voted", user_lang), show_alert=True)
+        await query.answer(get_text("poll_already_voted", lang), show_alert=True)
         return
 
-    # Lấy UID từ user_data
-    user_data = context.application.user_data.get(user.id, {})
-    tovest_uid = user_data.get("poll_uid", "")
+    # Lấy UID từ chat_data (lưu khi user nhập UID trong group)
+    uid_key = f"poll_uid_{user.id}"
+    tovest_uid = context.chat_data.get(uid_key, "")
     if not tovest_uid:
-        await query.answer("Please enter your UID first!", show_alert=True)
+        # Fallback: kiểm tra user_data (tương thích ngược)
+        tovest_uid = context.application.user_data.get(user.id, {}).get("poll_uid", "")
+    if not tovest_uid:
+        await query.answer(
+            get_text("poll_ask_uid", lang, poll_id=poll_id).replace("<b>", "").replace("</b>", "").split("\n")[0],
+            show_alert=True
+        )
         return
 
     await query.answer()
@@ -3054,14 +3085,13 @@ async def callback_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYP
         conn.commit()
     except sqlite3.IntegrityError:
         conn.close()
-        await query.message.reply_text(
-            get_text("poll_already_voted", user_lang),
-            parse_mode=ParseMode.HTML
-        )
+        await query.answer(get_text("poll_already_voted", lang), show_alert=True)
         return
     conn.close()
 
-    # Xóa trạng thái chờ
+    # Xóa UID tạm khỏi chat_data sau khi đã vote
+    context.chat_data.pop(uid_key, None)
+    # Xóa cả user_data cũ nếu có
     if user.id in context.application.user_data:
         context.application.user_data[user.id].pop("poll_awaiting_uid", None)
         context.application.user_data[user.id].pop("poll_uid", None)
@@ -3071,59 +3101,64 @@ async def callback_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYP
                   "C": poll["option_c"], "D": poll["option_d"]}
     answer_text = f"{answer} - {answer_map.get(answer, '')}"
 
+    name = display_name(user)
     await query.message.reply_text(
-        get_text("poll_answer_recorded", user_lang,
-                 poll_id=poll_id, uid=tovest_uid, answer=answer_text),
+        f"🙋 <a href=\"tg://user?id={user.id}\">{name}</a>\n"
+        + get_text("poll_answer_recorded", lang,
+                   poll_id=poll_id, uid=tovest_uid, answer=answer_text),
         parse_mode=ParseMode.HTML
     )
     logger.info(f"Poll #{poll_id}: User {user.id} voted {answer} (UID: {tovest_uid})")
 
 
-async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_group_uid_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Xử lý tin nhắn text trong private chat.
-    Dùng để nhận UID Tovest khi user đang báo danh poll.
+    Xử lý tin nhắn text trong group khi user đang chờ nhập UID Tovest.
+    Được gọi khi chat_data có key poll_uid_pending_{user_id}.
     """
     user = update.effective_user
-    if not user or update.effective_chat.type != "private":
+    chat = update.effective_chat
+    if not user or chat.type not in ("group", "supergroup"):
         return
 
-    user_data = context.application.user_data.get(user.id, {})
-    poll_id = user_data.get("poll_awaiting_uid")
+    # Kiểm tra user này có đang chờ nhập UID không
+    pending_key = f"poll_uid_pending_{user.id}"
+    poll_id = context.chat_data.get(pending_key)
 
     if not poll_id:
-        return  # Không có gì đang chờ
+        return  # Không có gì đang chờ cho user này
+
+    lang = chat_lang(update)
 
     # Kiểm tra poll còn active không
     poll = get_poll_by_id(poll_id)
     if not poll or poll["status"] != "active":
-        user_lang = get_lang(user.id)
         await update.message.reply_text(
-            get_text("poll_closed", user_lang),
+            get_text("poll_closed", lang),
             parse_mode=ParseMode.HTML
         )
         # Xóa trạng thái
-        context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+        context.chat_data.pop(pending_key, None)
         return
 
     # Kiểm tra đã vote chưa
     if has_user_voted(poll_id, user.id):
-        user_lang = get_lang(user.id)
         await update.message.reply_text(
-            get_text("poll_already_voted", user_lang),
+            get_text("poll_already_voted", lang),
             parse_mode=ParseMode.HTML
         )
-        context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+        context.chat_data.pop(pending_key, None)
         return
 
     uid_text = update.message.text.strip()
-    user_lang = get_lang(user.id)
 
-    # Lưu UID vào user_data
-    context.application.user_data[user.id]["poll_uid"] = uid_text
-    context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+    # Lưu UID tạm thời vào chat_data (gắn với user trong group này)
+    uid_key = f"poll_uid_{user.id}"
+    context.chat_data[uid_key] = uid_text
+    # Xóa trạng thái chờ
+    context.chat_data.pop(pending_key, None)
 
-    # Hiển thị nội dung bình chọn với 4 nút đáp án
+    # Hiển thị xác nhận UID và 4 nút đáp án trong group
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton(f"🅰️ {poll['option_a']}", callback_data=f"poll_answer_{poll_id}_A"),
@@ -3135,18 +3170,27 @@ async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_T
         ],
     ])
 
+    name = display_name(user)
+    uid_confirm = get_text("poll_uid_received", lang, uid=uid_text)
+    choose_text = get_text("poll_choose_answer", lang,
+                           question=poll["question"],
+                           opt_a=poll["option_a"], opt_b=poll["option_b"],
+                           opt_c=poll["option_c"], opt_d=poll["option_d"])
+
     await update.message.reply_text(
-        get_text("poll_uid_received", user_lang, uid=uid_text),
-        parse_mode=ParseMode.HTML
-    )
-    await update.message.reply_text(
-        get_text("poll_choose_answer", user_lang,
-                 question=poll["question"],
-                 opt_a=poll["option_a"], opt_b=poll["option_b"],
-                 opt_c=poll["option_c"], opt_d=poll["option_d"]),
+        f"🙋 <a href=\"tg://user?id={user.id}\">{name}</a>\n{uid_confirm}\n\n{choose_text}",
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard
     )
+
+
+async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Xử lý tin nhắn text trong private chat.
+    Giữ lại để tương thích ngược - không còn dùng cho poll flow.
+    """
+    # Không làm gì - poll flow đã chuyển sang group
+    pass
 
 
 async def _job_poll_reminder(context: ContextTypes.DEFAULT_TYPE):
@@ -3932,17 +3976,24 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_poll_refresh, pattern=r"^poll_refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(callback_poll_answer, pattern=r"^poll_answer_\d+_[ABCD]$"))
 
-    # Private message handler (for UID input during poll registration)
+    # Private message handler (kept for backward compatibility, no longer used for poll)
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
         handle_private_message
     ), group=0)
 
+    # Group message handler: nhận UID Tovest khi user đang báo danh poll trong group
+    # Phải đăng ký trước on_new_chat (group=1) để ưu tiên xử lý UID input
+    app.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
+        handle_group_uid_input
+    ), group=1)
+
     # Auto-detect group (bắt mọi message trong group để lưu chat_id)
     app.add_handler(MessageHandler(
         filters.ChatType.GROUPS & ~filters.COMMAND,
         on_new_chat
-    ), group=1)
+    ), group=2)
 
     # Error handler
     app.add_error_handler(error_handler)
