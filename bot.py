@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Tovest Telegram Bot - Event & Check-in & Referral System (Multilingual)
-========================================================================
-Bot quản lý event link, check-in hàng ngày, referral, quy đổi USDT.
+Tovest Telegram Bot - Event & Check-in & Referral & Prediction System (Multilingual)
+======================================================================================
+Bot quản lý event link, check-in hàng ngày, referral, quy đổi USDT,
+và hệ thống bình chọn/prediction kiểu Polymarket.
 Hỗ trợ đa ngôn ngữ: Tiếng Việt (vi), Tiếng Anh (en), Tiếng Indonesia (id).
 Sử dụng: python-telegram-bot v20+ (async) + SQLite + JobQueue (APScheduler)
 
@@ -12,8 +13,10 @@ Author: Manus AI
 import os
 import io
 import csv
+import json
 import logging
 import sqlite3
+import asyncio
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -23,7 +26,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
+    MessageHandler, ContextTypes, filters, ConversationHandler
 )
 from telegram.constants import ParseMode
 
@@ -55,6 +58,12 @@ MILESTONE_BONUSES = {7: 50, 14: 120, 30: 300, 60: 700, 100: 1500}
 # Quy đổi USDT
 POINTS_PER_REDEEM = 500
 USDT_PER_REDEEM = 0.05
+
+# Poll/Prediction config
+POLL_BASE_REWARD = 20.0   # Kho thưởng base: 20 USDT
+POLL_PER_USER_BONUS = 0.5  # Mỗi user tham gia: +0.5 USDT
+POLL_MIN_MINUTES = 5
+POLL_MAX_MINUTES = 30
 
 # ============================================================
 # LOGGING
@@ -330,6 +339,122 @@ LANG = {
         # --- Private reply ---
         "private_reply_sent": "✅ Thông tin đã được gửi qua tin nhắn riêng.",
         "private_reply_error": "⚠️ Không thể gửi tin nhắn riêng. Vui lòng /start bot @{bot_username} trước.",
+
+        # -------------------------------------------------------
+        # PREDICTION / POLL SYSTEM - TIẾNG VIỆT
+        # -------------------------------------------------------
+        "poll_create_usage": (
+            "📌 Cách dùng:\n"
+            "<code>/create_poll\n"
+            "Câu hỏi bình chọn?\n"
+            "Đáp án A\n"
+            "Đáp án B\n"
+            "Đáp án C\n"
+            "Đáp án D\n"
+            "15</code>\n\n"
+            "Dòng cuối là thời gian (phút): 5-30"
+        ),
+        "poll_created": (
+            "🎯 <b>BÌNH CHỌN ĐÃ TẠO!</b>\n\n"
+            "📋 ID: <b>#{poll_id}</b>\n"
+            "❓ {question}\n"
+            "⏰ Thời gian: <b>{minutes} phút</b>\n"
+            "💰 Kho thưởng: <b>{reward:.2f} USDT</b>\n\n"
+            "Bình chọn đã được gửi vào các group."
+        ),
+        "poll_active_exists": "⚠️ Đang có bình chọn đang diễn ra (#{poll_id}). Vui lòng đợi kết thúc hoặc dùng /close_poll.",
+        "poll_invalid_time": "⚠️ Thời gian phải từ {min} đến {max} phút.",
+        "poll_need_4_answers": "⚠️ Cần đúng 4 đáp án. Vui lòng thử lại.",
+
+        "poll_announcement": (
+            "🎯 <b>BÌNH CHỌN #{poll_id}</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}\n\n"
+            "💰 Kho thưởng: <b>{reward:.2f} USDT</b>\n"
+            "👥 Người tham gia: <b>{participants}</b>\n"
+            "⏰ Còn lại: <b>{time_left}</b>\n\n"
+            "Bấm nút bên dưới để tham gia!"
+        ),
+        "poll_btn_join": "🙋 Báo danh tham gia",
+        "poll_btn_refresh": "🔄 Cập nhật",
+
+        "poll_ask_uid": (
+            "🙋 <b>BÁO DANH BÌNH CHỌN #{poll_id}</b>\n\n"
+            "Vui lòng nhập <b>UID Tovest</b> của bạn để tiếp tục:"
+        ),
+        "poll_uid_received": (
+            "✅ UID đã ghi nhận: <b>{uid}</b>\n\n"
+            "Bây giờ hãy chọn đáp án của bạn:"
+        ),
+        "poll_choose_answer": (
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}"
+        ),
+        "poll_answer_recorded": (
+            "✅ <b>Đã ghi nhận lựa chọn!</b>\n\n"
+            "📋 Bình chọn: #{poll_id}\n"
+            "🆔 UID Tovest: <b>{uid}</b>\n"
+            "✏️ Đáp án: <b>{answer}</b>\n\n"
+            "⏳ Vui lòng chờ kết quả khi bình chọn kết thúc."
+        ),
+        "poll_already_voted": "⚠️ Bạn đã bình chọn rồi! Không thể thay đổi đáp án.",
+        "poll_closed": "⚠️ Bình chọn đã kết thúc! Không thể tham gia.",
+        "poll_no_active": "⚠️ Không có bình chọn nào đang diễn ra.",
+
+        "poll_closing_soon": (
+            "⏰ <b>SẮP HẾT GIỜ!</b>\n\n"
+            "Bình chọn #{poll_id} sẽ đóng trong <b>{minutes} phút</b> nữa!\n"
+            "💰 Kho thưởng hiện tại: <b>{reward:.2f} USDT</b>\n"
+            "👥 Đã tham gia: <b>{participants}</b> người\n\n"
+            "Nhanh tay báo danh nếu chưa tham gia!"
+        ),
+        "poll_auto_closed": (
+            "🔒 <b>BÌNH CHỌN #{poll_id} ĐÃ ĐÓNG!</b>\n\n"
+            "❓ {question}\n"
+            "👥 Tổng người tham gia: <b>{participants}</b>\n"
+            "💰 Kho thưởng: <b>{reward:.2f} USDT</b>\n\n"
+            "⏳ Đang chờ admin công bố đáp án đúng.\n"
+            "Admin dùng: /set_result {poll_id} A/B/C/D"
+        ),
+
+        "poll_set_result_usage": "📌 Cách dùng: /set_result [poll_id] A/B/C/D",
+        "poll_not_found": "⚠️ Không tìm thấy bình chọn #{poll_id}.",
+        "poll_not_closed": "⚠️ Bình chọn #{poll_id} chưa đóng. Vui lòng đợi hết giờ hoặc dùng /close_poll.",
+        "poll_already_has_result": "⚠️ Bình chọn #{poll_id} đã có kết quả rồi.",
+        "poll_invalid_answer": "⚠️ Đáp án không hợp lệ. Chọn: A, B, C hoặc D.",
+
+        "poll_result_announcement": (
+            "🏆 <b>KẾT QUẢ BÌNH CHỌN #{poll_id}</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "✅ Đáp án đúng: <b>{correct_label} - {correct_text}</b>\n\n"
+            "📊 <b>Thống kê:</b>\n"
+            "🅰️ {opt_a}: <b>{count_a}</b> người\n"
+            "🅱️ {opt_b}: <b>{count_b}</b> người\n"
+            "🅲 {opt_c}: <b>{count_c}</b> người\n"
+            "🅳 {opt_d}: <b>{count_d}</b> người\n\n"
+            "💰 Kho thưởng: <b>{reward:.2f} USDT</b>\n"
+            "🎉 Số người thắng: <b>{winners}</b>\n"
+            "💵 Mỗi người nhận: <b>{per_person:.2f} USDT</b>\n\n"
+            "{winner_list}"
+        ),
+        "poll_result_no_winner": "😢 Không ai chọn đúng đáp án. Kho thưởng sẽ được chuyển sang bình chọn tiếp theo.",
+        "poll_winner_item": "🏅 {name} (@{username}) | UID: {uid} | +{reward:.2f} USDT",
+        "poll_winner_header": "🏆 <b>Danh sách người thắng:</b>\n",
+
+        "poll_export_caption": "📊 Xuất dữ liệu bình chọn #{poll_id} - {date}",
+        "poll_export_no_data": "⚠️ Không có dữ liệu bình chọn để xuất.",
+        "poll_export_usage": "📌 Cách dùng: /export_poll [poll_id]  (không có ID = poll gần nhất)",
+
+        "poll_close_usage": "📌 Cách dùng: /close_poll [poll_id]  (đóng sớm bình chọn)",
+        "poll_force_closed": "🔒 Bình chọn #{poll_id} đã được đóng thủ công bởi admin.",
+
+        "poll_time_left_fmt": "{minutes}p {seconds}s",
     },
 
     # -------------------------------------------------------
@@ -591,6 +716,122 @@ LANG = {
         # --- Private reply ---
         "private_reply_sent": "✅ Info has been sent to your private chat.",
         "private_reply_error": "⚠️ Cannot send private message. Please /start @{bot_username} first.",
+
+        # -------------------------------------------------------
+        # PREDICTION / POLL SYSTEM - ENGLISH
+        # -------------------------------------------------------
+        "poll_create_usage": (
+            "📌 Usage:\n"
+            "<code>/create_poll\n"
+            "Poll question?\n"
+            "Option A\n"
+            "Option B\n"
+            "Option C\n"
+            "Option D\n"
+            "15</code>\n\n"
+            "Last line is duration (minutes): 5-30"
+        ),
+        "poll_created": (
+            "🎯 <b>POLL CREATED!</b>\n\n"
+            "📋 ID: <b>#{poll_id}</b>\n"
+            "❓ {question}\n"
+            "⏰ Duration: <b>{minutes} minutes</b>\n"
+            "💰 Prize pool: <b>{reward:.2f} USDT</b>\n\n"
+            "Poll has been sent to all groups."
+        ),
+        "poll_active_exists": "⚠️ There is an active poll (#{poll_id}). Please wait or use /close_poll.",
+        "poll_invalid_time": "⚠️ Duration must be between {min} and {max} minutes.",
+        "poll_need_4_answers": "⚠️ Exactly 4 options required. Please try again.",
+
+        "poll_announcement": (
+            "🎯 <b>PREDICTION #{poll_id}</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}\n\n"
+            "💰 Prize pool: <b>{reward:.2f} USDT</b>\n"
+            "👥 Participants: <b>{participants}</b>\n"
+            "⏰ Time left: <b>{time_left}</b>\n\n"
+            "Press the button below to participate!"
+        ),
+        "poll_btn_join": "🙋 Register to participate",
+        "poll_btn_refresh": "🔄 Refresh",
+
+        "poll_ask_uid": (
+            "🙋 <b>REGISTER FOR PREDICTION #{poll_id}</b>\n\n"
+            "Please enter your <b>Tovest UID</b> to continue:"
+        ),
+        "poll_uid_received": (
+            "✅ UID recorded: <b>{uid}</b>\n\n"
+            "Now choose your answer:"
+        ),
+        "poll_choose_answer": (
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}"
+        ),
+        "poll_answer_recorded": (
+            "✅ <b>Vote recorded!</b>\n\n"
+            "📋 Prediction: #{poll_id}\n"
+            "🆔 Tovest UID: <b>{uid}</b>\n"
+            "✏️ Answer: <b>{answer}</b>\n\n"
+            "⏳ Please wait for results when the poll ends."
+        ),
+        "poll_already_voted": "⚠️ You have already voted! Cannot change your answer.",
+        "poll_closed": "⚠️ This poll has ended! Cannot participate.",
+        "poll_no_active": "⚠️ No active poll at the moment.",
+
+        "poll_closing_soon": (
+            "⏰ <b>CLOSING SOON!</b>\n\n"
+            "Prediction #{poll_id} will close in <b>{minutes} minute(s)</b>!\n"
+            "💰 Current prize pool: <b>{reward:.2f} USDT</b>\n"
+            "👥 Participants: <b>{participants}</b>\n\n"
+            "Register now if you haven't!"
+        ),
+        "poll_auto_closed": (
+            "🔒 <b>PREDICTION #{poll_id} CLOSED!</b>\n\n"
+            "❓ {question}\n"
+            "👥 Total participants: <b>{participants}</b>\n"
+            "💰 Prize pool: <b>{reward:.2f} USDT</b>\n\n"
+            "⏳ Waiting for admin to announce the correct answer.\n"
+            "Admin use: /set_result {poll_id} A/B/C/D"
+        ),
+
+        "poll_set_result_usage": "📌 Usage: /set_result [poll_id] A/B/C/D",
+        "poll_not_found": "⚠️ Poll #{poll_id} not found.",
+        "poll_not_closed": "⚠️ Poll #{poll_id} is still open. Wait or use /close_poll.",
+        "poll_already_has_result": "⚠️ Poll #{poll_id} already has a result.",
+        "poll_invalid_answer": "⚠️ Invalid answer. Choose: A, B, C or D.",
+
+        "poll_result_announcement": (
+            "🏆 <b>PREDICTION #{poll_id} RESULTS</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "✅ Correct answer: <b>{correct_label} - {correct_text}</b>\n\n"
+            "📊 <b>Statistics:</b>\n"
+            "🅰️ {opt_a}: <b>{count_a}</b> votes\n"
+            "🅱️ {opt_b}: <b>{count_b}</b> votes\n"
+            "🅲 {opt_c}: <b>{count_c}</b> votes\n"
+            "🅳 {opt_d}: <b>{count_d}</b> votes\n\n"
+            "💰 Prize pool: <b>{reward:.2f} USDT</b>\n"
+            "🎉 Winners: <b>{winners}</b>\n"
+            "💵 Each receives: <b>{per_person:.2f} USDT</b>\n\n"
+            "{winner_list}"
+        ),
+        "poll_result_no_winner": "😢 No one chose the correct answer. Prize pool will carry over to the next poll.",
+        "poll_winner_item": "🏅 {name} (@{username}) | UID: {uid} | +{reward:.2f} USDT",
+        "poll_winner_header": "🏆 <b>Winners list:</b>\n",
+
+        "poll_export_caption": "📊 Poll #{poll_id} data export - {date}",
+        "poll_export_no_data": "⚠️ No poll data to export.",
+        "poll_export_usage": "📌 Usage: /export_poll [poll_id]  (no ID = latest poll)",
+
+        "poll_close_usage": "📌 Usage: /close_poll [poll_id]  (force close a poll)",
+        "poll_force_closed": "🔒 Poll #{poll_id} has been manually closed by admin.",
+
+        "poll_time_left_fmt": "{minutes}m {seconds}s",
     },
 
     # -------------------------------------------------------
@@ -852,6 +1093,122 @@ LANG = {
         # --- Private reply ---
         "private_reply_sent": "✅ Info telah dikirim ke chat pribadi Anda.",
         "private_reply_error": "⚠️ Tidak bisa mengirim pesan pribadi. Silakan /start @{bot_username} terlebih dahulu.",
+
+        # -------------------------------------------------------
+        # PREDICTION / POLL SYSTEM - BAHASA INDONESIA
+        # -------------------------------------------------------
+        "poll_create_usage": (
+            "📌 Cara pakai:\n"
+            "<code>/create_poll\n"
+            "Pertanyaan prediksi?\n"
+            "Opsi A\n"
+            "Opsi B\n"
+            "Opsi C\n"
+            "Opsi D\n"
+            "15</code>\n\n"
+            "Baris terakhir adalah durasi (menit): 5-30"
+        ),
+        "poll_created": (
+            "🎯 <b>PREDIKSI DIBUAT!</b>\n\n"
+            "📋 ID: <b>#{poll_id}</b>\n"
+            "❓ {question}\n"
+            "⏰ Durasi: <b>{minutes} menit</b>\n"
+            "💰 Hadiah: <b>{reward:.2f} USDT</b>\n\n"
+            "Prediksi telah dikirim ke semua grup."
+        ),
+        "poll_active_exists": "⚠️ Ada prediksi aktif (#{poll_id}). Tunggu selesai atau gunakan /close_poll.",
+        "poll_invalid_time": "⚠️ Durasi harus antara {min} dan {max} menit.",
+        "poll_need_4_answers": "⚠️ Dibutuhkan tepat 4 opsi. Silakan coba lagi.",
+
+        "poll_announcement": (
+            "🎯 <b>PREDIKSI #{poll_id}</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}\n\n"
+            "💰 Hadiah: <b>{reward:.2f} USDT</b>\n"
+            "👥 Peserta: <b>{participants}</b>\n"
+            "⏰ Sisa waktu: <b>{time_left}</b>\n\n"
+            "Tekan tombol di bawah untuk berpartisipasi!"
+        ),
+        "poll_btn_join": "🙋 Daftar berpartisipasi",
+        "poll_btn_refresh": "🔄 Perbarui",
+
+        "poll_ask_uid": (
+            "🙋 <b>DAFTAR PREDIKSI #{poll_id}</b>\n\n"
+            "Silakan masukkan <b>UID Tovest</b> Anda untuk melanjutkan:"
+        ),
+        "poll_uid_received": (
+            "✅ UID tercatat: <b>{uid}</b>\n\n"
+            "Sekarang pilih jawaban Anda:"
+        ),
+        "poll_choose_answer": (
+            "❓ <b>{question}</b>\n\n"
+            "🅰️ {opt_a}\n"
+            "🅱️ {opt_b}\n"
+            "🅲 {opt_c}\n"
+            "🅳 {opt_d}"
+        ),
+        "poll_answer_recorded": (
+            "✅ <b>Suara tercatat!</b>\n\n"
+            "📋 Prediksi: #{poll_id}\n"
+            "🆔 UID Tovest: <b>{uid}</b>\n"
+            "✏️ Jawaban: <b>{answer}</b>\n\n"
+            "⏳ Silakan tunggu hasil saat prediksi berakhir."
+        ),
+        "poll_already_voted": "⚠️ Anda sudah memilih! Tidak bisa mengubah jawaban.",
+        "poll_closed": "⚠️ Prediksi sudah berakhir! Tidak bisa berpartisipasi.",
+        "poll_no_active": "⚠️ Tidak ada prediksi aktif saat ini.",
+
+        "poll_closing_soon": (
+            "⏰ <b>SEGERA DITUTUP!</b>\n\n"
+            "Prediksi #{poll_id} akan ditutup dalam <b>{minutes} menit</b>!\n"
+            "💰 Hadiah saat ini: <b>{reward:.2f} USDT</b>\n"
+            "👥 Peserta: <b>{participants}</b>\n\n"
+            "Daftar sekarang jika belum!"
+        ),
+        "poll_auto_closed": (
+            "🔒 <b>PREDIKSI #{poll_id} DITUTUP!</b>\n\n"
+            "❓ {question}\n"
+            "👥 Total peserta: <b>{participants}</b>\n"
+            "💰 Hadiah: <b>{reward:.2f} USDT</b>\n\n"
+            "⏳ Menunggu admin mengumumkan jawaban yang benar.\n"
+            "Admin gunakan: /set_result {poll_id} A/B/C/D"
+        ),
+
+        "poll_set_result_usage": "📌 Cara pakai: /set_result [poll_id] A/B/C/D",
+        "poll_not_found": "⚠️ Prediksi #{poll_id} tidak ditemukan.",
+        "poll_not_closed": "⚠️ Prediksi #{poll_id} masih berjalan. Tunggu atau gunakan /close_poll.",
+        "poll_already_has_result": "⚠️ Prediksi #{poll_id} sudah memiliki hasil.",
+        "poll_invalid_answer": "⚠️ Jawaban tidak valid. Pilih: A, B, C atau D.",
+
+        "poll_result_announcement": (
+            "🏆 <b>HASIL PREDIKSI #{poll_id}</b>\n\n"
+            "❓ <b>{question}</b>\n\n"
+            "✅ Jawaban benar: <b>{correct_label} - {correct_text}</b>\n\n"
+            "📊 <b>Statistik:</b>\n"
+            "🅰️ {opt_a}: <b>{count_a}</b> suara\n"
+            "🅱️ {opt_b}: <b>{count_b}</b> suara\n"
+            "🅲 {opt_c}: <b>{count_c}</b> suara\n"
+            "🅳 {opt_d}: <b>{count_d}</b> suara\n\n"
+            "💰 Hadiah: <b>{reward:.2f} USDT</b>\n"
+            "🎉 Pemenang: <b>{winners}</b>\n"
+            "💵 Masing-masing menerima: <b>{per_person:.2f} USDT</b>\n\n"
+            "{winner_list}"
+        ),
+        "poll_result_no_winner": "😢 Tidak ada yang memilih jawaban yang benar. Hadiah akan dialihkan ke prediksi berikutnya.",
+        "poll_winner_item": "🏅 {name} (@{username}) | UID: {uid} | +{reward:.2f} USDT",
+        "poll_winner_header": "🏆 <b>Daftar pemenang:</b>\n",
+
+        "poll_export_caption": "📊 Ekspor data prediksi #{poll_id} - {date}",
+        "poll_export_no_data": "⚠️ Tidak ada data prediksi untuk diekspor.",
+        "poll_export_usage": "📌 Cara pakai: /export_poll [poll_id]  (tanpa ID = prediksi terakhir)",
+
+        "poll_close_usage": "📌 Cara pakai: /close_poll [poll_id]  (tutup paksa prediksi)",
+        "poll_force_closed": "🔒 Prediksi #{poll_id} telah ditutup secara manual oleh admin.",
+
+        "poll_time_left_fmt": "{minutes}m {seconds}d",
     },
 }
 
@@ -886,7 +1243,7 @@ def get_db() -> sqlite3.Connection:
 
 
 def init_db():
-    """Khởi tạo tất cả bảng cần thiết (bao gồm bảng ngôn ngữ)."""
+    """Khởi tạo tất cả bảng cần thiết (bao gồm bảng ngôn ngữ và poll)."""
     conn = get_db()
     conn.executescript("""
         -- Bảng user
@@ -961,6 +1318,54 @@ def init_db():
             links       TEXT DEFAULT NULL,
             target_groups TEXT DEFAULT NULL,
             created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        -- ============================================================
+        -- POLL / PREDICTION TABLES
+        -- ============================================================
+
+        -- Bảng polls (bình chọn)
+        CREATE TABLE IF NOT EXISTS polls (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            question        TEXT NOT NULL,
+            option_a        TEXT NOT NULL,
+            option_b        TEXT NOT NULL,
+            option_c        TEXT NOT NULL,
+            option_d        TEXT NOT NULL,
+            duration_minutes INTEGER NOT NULL,
+            base_reward     REAL DEFAULT 20.0,
+            status          TEXT DEFAULT 'active',
+            correct_answer  TEXT DEFAULT NULL,
+            created_by      INTEGER NOT NULL,
+            created_at      TEXT DEFAULT (datetime('now')),
+            closed_at       TEXT DEFAULT NULL,
+            result_at       TEXT DEFAULT NULL
+        );
+
+        -- Bảng poll participants (người tham gia bình chọn)
+        CREATE TABLE IF NOT EXISTS poll_participants (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id     INTEGER NOT NULL,
+            user_id     INTEGER NOT NULL,
+            username    TEXT DEFAULT '',
+            full_name   TEXT DEFAULT '',
+            tovest_uid  TEXT NOT NULL,
+            answer      TEXT NOT NULL,
+            reward      REAL DEFAULT 0,
+            is_winner   INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now')),
+            UNIQUE(poll_id, user_id),
+            FOREIGN KEY (poll_id) REFERENCES polls(id)
+        );
+
+        -- Bảng lưu message_id của poll announcement trong các group (để update realtime)
+        CREATE TABLE IF NOT EXISTS poll_messages (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            poll_id     INTEGER NOT NULL,
+            chat_id     INTEGER NOT NULL,
+            message_id  INTEGER NOT NULL,
+            UNIQUE(poll_id, chat_id),
+            FOREIGN KEY (poll_id) REFERENCES polls(id)
         );
     """)
     conn.commit()
@@ -1158,11 +1563,112 @@ def build_post_keyboard(lang: str, links: dict = None) -> InlineKeyboardMarkup:
 
 
 # ============================================================
+# POLL / PREDICTION HELPER FUNCTIONS
+# ============================================================
+
+def get_active_poll() -> dict | None:
+    """Lấy poll đang active. Trả về None nếu không có."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM polls WHERE status = 'active' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_poll_by_id(poll_id: int) -> dict | None:
+    """Lấy poll theo ID."""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_poll_participant_count(poll_id: int) -> int:
+    """Đếm số người tham gia poll."""
+    conn = get_db()
+    cnt = conn.execute(
+        "SELECT COUNT(*) as cnt FROM poll_participants WHERE poll_id = ?", (poll_id,)
+    ).fetchone()["cnt"]
+    conn.close()
+    return cnt
+
+
+def get_poll_reward(poll_id: int) -> float:
+    """Tính tổng kho thưởng: base + 0.5 * số người tham gia."""
+    conn = get_db()
+    poll = conn.execute("SELECT base_reward FROM polls WHERE id = ?", (poll_id,)).fetchone()
+    cnt = conn.execute(
+        "SELECT COUNT(*) as cnt FROM poll_participants WHERE poll_id = ?", (poll_id,)
+    ).fetchone()["cnt"]
+    conn.close()
+    if not poll:
+        return 0
+    return poll["base_reward"] + (POLL_PER_USER_BONUS * cnt)
+
+
+def get_poll_time_left(poll: dict) -> str:
+    """Tính thời gian còn lại của poll. Trả về chuỗi formatted."""
+    created = datetime.strptime(poll["created_at"], "%Y-%m-%d %H:%M:%S")
+    end_time = created + timedelta(minutes=poll["duration_minutes"])
+    now = datetime.utcnow()
+    diff = end_time - now
+    if diff.total_seconds() <= 0:
+        return "0p 0s"
+    minutes = int(diff.total_seconds() // 60)
+    seconds = int(diff.total_seconds() % 60)
+    return f"{minutes}p {seconds}s"
+
+
+def get_poll_time_left_seconds(poll: dict) -> float:
+    """Tính thời gian còn lại (giây)."""
+    created = datetime.strptime(poll["created_at"], "%Y-%m-%d %H:%M:%S")
+    end_time = created + timedelta(minutes=poll["duration_minutes"])
+    now = datetime.utcnow()
+    return (end_time - now).total_seconds()
+
+
+def get_poll_answer_counts(poll_id: int) -> dict:
+    """Đếm số vote cho mỗi đáp án."""
+    conn = get_db()
+    counts = {"A": 0, "B": 0, "C": 0, "D": 0}
+    rows = conn.execute(
+        "SELECT answer, COUNT(*) as cnt FROM poll_participants "
+        "WHERE poll_id = ? GROUP BY answer", (poll_id,)
+    ).fetchall()
+    conn.close()
+    for r in rows:
+        counts[r["answer"]] = r["cnt"]
+    return counts
+
+
+def has_user_voted(poll_id: int, user_id: int) -> bool:
+    """Kiểm tra user đã vote chưa."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM poll_participants WHERE poll_id = ? AND user_id = ?",
+        (poll_id, user_id)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def get_latest_poll() -> dict | None:
+    """Lấy poll gần nhất (bất kể status)."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM polls ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ============================================================
 # COMMAND HANDLERS
 # ============================================================
 
 async def cmd_setlang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xử lý /setlang - Chỉ admin @leyleyeyy mới dùng được."""
+    """Xử lý /setlang - Chỉ admin mới dùng được."""
     lang = chat_lang(update)
 
     # Kiểm tra quyền admin
@@ -1942,7 +2448,7 @@ def parse_target_groups(text: str) -> tuple:
     lines = text.split("\n")
     target_ids = None
     remaining_lines = []
-    
+
     for line in lines:
         stripped = line.strip().lower()
         if stripped.startswith("group:"):
@@ -1964,7 +2470,7 @@ def parse_target_groups(text: str) -> tuple:
                     target_ids = None
         else:
             remaining_lines.append(line)
-    
+
     return "\n".join(remaining_lines).strip(), target_ids
 
 
@@ -2005,10 +2511,10 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Lấy nội dung bài post
     raw_text = update.message.text.split(None, 1)[1]
-    
+
     # Parse target groups (group: 1,2,3 hoặc group: all)
     raw_text_no_group, target_groups = parse_target_groups(raw_text)
-    
+
     # Parse custom links
     content, links = parse_post_links(raw_text_no_group)
 
@@ -2018,7 +2524,7 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     success, fail = await _send_post_to_groups(context.bot, content, links, target_groups)
-    
+
     # Hiển thị kết quả
     result_text = get_text("post_success", lang, success=success, fail=fail)
     if target_groups:
@@ -2026,7 +2532,7 @@ async def cmd_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         result_text += "\n🌐 Gửi tất cả group"
     if fail > 0:
-        result_text += "\n\n\ud83d\udd0d Dùng /check_error để xem chi tiết lỗi."
+        result_text += "\n\n🔍 Dùng /check_error để xem chi tiết lỗi."
     await update.message.reply_text(result_text, parse_mode=ParseMode.HTML)
     logger.info(f"Admin post: {success} thành công, {fail} thất bại")
 
@@ -2099,7 +2605,7 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(get_text("schedule_post_usage", lang), parse_mode=ParseMode.HTML)
         return
     full_content = raw_text[2]
-    
+
     # Parse target groups
     full_content_no_group, target_groups = parse_target_groups(full_content)
     content, links = parse_post_links(full_content_no_group)
@@ -2113,9 +2619,8 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     scheduled_time_str = scheduled_dt.strftime("%Y-%m-%d %H:%M")
 
     # Lưu vào DB (lưu cả links và target_groups dưới dạng JSON)
-    import json as _json
-    links_json = _json.dumps(links)
-    groups_json = _json.dumps(target_groups) if target_groups else None
+    links_json = json.dumps(links)
+    groups_json = json.dumps(target_groups) if target_groups else None
     conn = get_db()
     cur = conn.execute(
         "INSERT INTO scheduled_posts (content, scheduled_time, links, target_groups) VALUES (?, ?, ?, ?)",
@@ -2134,9 +2639,9 @@ async def cmd_schedule_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data={"post_id": post_id, "content": content, "links": links, "target_groups": target_groups}
     )
 
-    # TrỪ nội dung dài cho hiển thị
+    # Trừ nội dung dài cho hiển thị
     preview = content[:100] + ("..." if len(content) > 100 else "")
-    group_info = f"\n\ud83c\udfaf Chỉ định: {len(target_groups)} group" if target_groups else "\n\ud83c\udf10 Gửi tất cả group"
+    group_info = f"\n🎯 Chỉ định: {len(target_groups)} group" if target_groups else "\n🌐 Gửi tất cả group"
     await update.message.reply_text(
         get_text("schedule_post_success", lang,
                  post_id=post_id, time=scheduled_time_str, content=preview) + group_info,
@@ -2260,6 +2765,795 @@ async def _job_execute_scheduled_post(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+# POLL / PREDICTION SYSTEM
+# ============================================================
+
+async def cmd_create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Admin: /create_poll - Tạo bình chọn mới.
+    Format:
+    /create_poll
+    Câu hỏi?
+    Đáp án A
+    Đáp án B
+    Đáp án C
+    Đáp án D
+    15
+    """
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Kiểm tra có poll active không
+    active = get_active_poll()
+    if active:
+        await update.message.reply_text(
+            get_text("poll_active_exists", lang, poll_id=active["id"]),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Parse nội dung
+    raw = update.message.text
+    # Tách dòng đầu (lệnh) ra
+    lines = raw.split("\n")
+    # Dòng đầu là /create_poll, bỏ qua
+    content_lines = [l.strip() for l in lines[1:] if l.strip()]
+
+    if len(content_lines) < 6:
+        await update.message.reply_text(
+            get_text("poll_create_usage", lang),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    question = content_lines[0]
+    opt_a = content_lines[1]
+    opt_b = content_lines[2]
+    opt_c = content_lines[3]
+    opt_d = content_lines[4]
+
+    try:
+        duration = int(content_lines[5])
+    except ValueError:
+        await update.message.reply_text(
+            get_text("poll_invalid_time", lang, min=POLL_MIN_MINUTES, max=POLL_MAX_MINUTES),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if duration < POLL_MIN_MINUTES or duration > POLL_MAX_MINUTES:
+        await update.message.reply_text(
+            get_text("poll_invalid_time", lang, min=POLL_MIN_MINUTES, max=POLL_MAX_MINUTES),
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Tạo poll trong DB
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO polls (question, option_a, option_b, option_c, option_d, "
+        "duration_minutes, base_reward, status, created_by) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        (question, opt_a, opt_b, opt_c, opt_d, duration, POLL_BASE_REWARD, update.effective_user.id)
+    )
+    poll_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    # Thông báo cho admin
+    reward = POLL_BASE_REWARD
+    await update.message.reply_text(
+        get_text("poll_created", lang, poll_id=poll_id, question=question,
+                 minutes=duration, reward=reward),
+        parse_mode=ParseMode.HTML
+    )
+
+    # Gửi bình chọn vào tất cả group
+    groups = get_all_groups()
+    time_left_str = f"{duration}p 0s"
+
+    for chat_id in groups:
+        try:
+            grp_lang = get_group_lang(chat_id)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    get_text("poll_btn_join", grp_lang),
+                    callback_data=f"poll_join_{poll_id}"
+                )],
+                [InlineKeyboardButton(
+                    get_text("poll_btn_refresh", grp_lang),
+                    callback_data=f"poll_refresh_{poll_id}"
+                )],
+            ])
+            msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=get_text("poll_announcement", grp_lang,
+                              poll_id=poll_id, question=question,
+                              opt_a=opt_a, opt_b=opt_b, opt_c=opt_c, opt_d=opt_d,
+                              reward=reward, participants=0, time_left=time_left_str),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+            # Lưu message_id để update sau
+            conn2 = get_db()
+            conn2.execute(
+                "INSERT OR REPLACE INTO poll_messages (poll_id, chat_id, message_id) VALUES (?, ?, ?)",
+                (poll_id, chat_id, msg.message_id)
+            )
+            conn2.commit()
+            conn2.close()
+        except Exception as e:
+            logger.error(f"Gửi poll vào group {chat_id} thất bại: {e}")
+
+    # Đăng ký job tự động đóng poll
+    context.application.job_queue.run_once(
+        _job_close_poll,
+        when=duration * 60,
+        name=f"poll_close_{poll_id}",
+        data={"poll_id": poll_id}
+    )
+
+    # Đăng ký job nhắc nhở khi sắp hết giờ (2 phút trước khi đóng, nếu duration > 3)
+    if duration > 3:
+        reminder_delay = (duration - 2) * 60
+        context.application.job_queue.run_once(
+            _job_poll_reminder,
+            when=reminder_delay,
+            name=f"poll_reminder_{poll_id}",
+            data={"poll_id": poll_id}
+        )
+
+    logger.info(f"Poll #{poll_id} created by {update.effective_user.username}: {question}")
+
+
+async def callback_poll_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback khi user bấm 'Báo danh' trong group."""
+    query = update.callback_query
+    user = query.from_user
+    data = query.data  # poll_join_{poll_id}
+    poll_id = int(data.replace("poll_join_", ""))
+
+    lang = chat_lang(update)
+
+    # Kiểm tra poll còn active không
+    poll = get_poll_by_id(poll_id)
+    if not poll or poll["status"] != "active":
+        await query.answer(get_text("poll_closed", lang), show_alert=True)
+        return
+
+    # Kiểm tra thời gian
+    time_left = get_poll_time_left_seconds(poll)
+    if time_left <= 0:
+        await query.answer(get_text("poll_closed", lang), show_alert=True)
+        return
+
+    # Kiểm tra đã vote chưa
+    if has_user_voted(poll_id, user.id):
+        await query.answer(get_text("poll_already_voted", lang), show_alert=True)
+        return
+
+    await query.answer()
+
+    # Tạo/cập nhật user
+    get_or_create_user(user.id, user.username or "", user.full_name or "")
+
+    # Gửi tin nhắn riêng yêu cầu nhập UID
+    user_lang = get_lang(user.id)
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=get_text("poll_ask_uid", user_lang, poll_id=poll_id),
+            parse_mode=ParseMode.HTML
+        )
+        # Lưu trạng thái chờ nhập UID vào user_data
+        context.application.user_data.setdefault(user.id, {})
+        context.application.user_data[user.id]["poll_awaiting_uid"] = poll_id
+    except Exception:
+        # User chưa /start bot
+        await query.message.reply_text(
+            get_text("private_reply_error", lang, bot_username=BOT_USERNAME),
+            parse_mode=ParseMode.HTML
+        )
+
+
+async def callback_poll_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback khi user bấm 'Cập nhật' để refresh thông tin poll."""
+    query = update.callback_query
+    data = query.data  # poll_refresh_{poll_id}
+    poll_id = int(data.replace("poll_refresh_", ""))
+
+    lang = chat_lang(update)
+    poll = get_poll_by_id(poll_id)
+    if not poll:
+        await query.answer(get_text("poll_not_found", lang, poll_id=poll_id), show_alert=True)
+        return
+
+    if poll["status"] != "active":
+        await query.answer(get_text("poll_closed", lang), show_alert=True)
+        return
+
+    participants = get_poll_participant_count(poll_id)
+    reward = get_poll_reward(poll_id)
+    time_left = get_poll_time_left(poll)
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            get_text("poll_btn_join", lang),
+            callback_data=f"poll_join_{poll_id}"
+        )],
+        [InlineKeyboardButton(
+            get_text("poll_btn_refresh", lang),
+            callback_data=f"poll_refresh_{poll_id}"
+        )],
+    ])
+
+    try:
+        await query.edit_message_text(
+            text=get_text("poll_announcement", lang,
+                          poll_id=poll_id, question=poll["question"],
+                          opt_a=poll["option_a"], opt_b=poll["option_b"],
+                          opt_c=poll["option_c"], opt_d=poll["option_d"],
+                          reward=reward, participants=participants,
+                          time_left=time_left),
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard
+        )
+    except Exception:
+        pass  # Message not modified
+
+    await query.answer()
+
+
+async def callback_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback khi user chọn đáp án A/B/C/D."""
+    query = update.callback_query
+    user = query.from_user
+    data = query.data  # poll_answer_{poll_id}_{answer}
+    parts = data.split("_")
+    poll_id = int(parts[2])
+    answer = parts[3].upper()
+
+    user_lang = get_lang(user.id)
+
+    # Kiểm tra poll
+    poll = get_poll_by_id(poll_id)
+    if not poll or poll["status"] != "active":
+        await query.answer(get_text("poll_closed", user_lang), show_alert=True)
+        return
+
+    # Kiểm tra thời gian
+    time_left = get_poll_time_left_seconds(poll)
+    if time_left <= 0:
+        await query.answer(get_text("poll_closed", user_lang), show_alert=True)
+        return
+
+    # Kiểm tra đã vote chưa
+    if has_user_voted(poll_id, user.id):
+        await query.answer(get_text("poll_already_voted", user_lang), show_alert=True)
+        return
+
+    # Lấy UID từ user_data
+    user_data = context.application.user_data.get(user.id, {})
+    tovest_uid = user_data.get("poll_uid", "")
+    if not tovest_uid:
+        await query.answer("Please enter your UID first!", show_alert=True)
+        return
+
+    await query.answer()
+
+    # Lưu vote vào DB
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO poll_participants (poll_id, user_id, username, full_name, tovest_uid, answer) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (poll_id, user.id, user.username or "", user.full_name or "", tovest_uid, answer)
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        await query.message.reply_text(
+            get_text("poll_already_voted", user_lang),
+            parse_mode=ParseMode.HTML
+        )
+        return
+    conn.close()
+
+    # Xóa trạng thái chờ
+    if user.id in context.application.user_data:
+        context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+        context.application.user_data[user.id].pop("poll_uid", None)
+
+    # Map answer to text
+    answer_map = {"A": poll["option_a"], "B": poll["option_b"],
+                  "C": poll["option_c"], "D": poll["option_d"]}
+    answer_text = f"{answer} - {answer_map.get(answer, '')}"
+
+    await query.message.reply_text(
+        get_text("poll_answer_recorded", user_lang,
+                 poll_id=poll_id, uid=tovest_uid, answer=answer_text),
+        parse_mode=ParseMode.HTML
+    )
+    logger.info(f"Poll #{poll_id}: User {user.id} voted {answer} (UID: {tovest_uid})")
+
+
+async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Xử lý tin nhắn text trong private chat.
+    Dùng để nhận UID Tovest khi user đang báo danh poll.
+    """
+    user = update.effective_user
+    if not user or update.effective_chat.type != "private":
+        return
+
+    user_data = context.application.user_data.get(user.id, {})
+    poll_id = user_data.get("poll_awaiting_uid")
+
+    if not poll_id:
+        return  # Không có gì đang chờ
+
+    # Kiểm tra poll còn active không
+    poll = get_poll_by_id(poll_id)
+    if not poll or poll["status"] != "active":
+        user_lang = get_lang(user.id)
+        await update.message.reply_text(
+            get_text("poll_closed", user_lang),
+            parse_mode=ParseMode.HTML
+        )
+        # Xóa trạng thái
+        context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+        return
+
+    # Kiểm tra đã vote chưa
+    if has_user_voted(poll_id, user.id):
+        user_lang = get_lang(user.id)
+        await update.message.reply_text(
+            get_text("poll_already_voted", user_lang),
+            parse_mode=ParseMode.HTML
+        )
+        context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+        return
+
+    uid_text = update.message.text.strip()
+    user_lang = get_lang(user.id)
+
+    # Lưu UID vào user_data
+    context.application.user_data[user.id]["poll_uid"] = uid_text
+    context.application.user_data[user.id].pop("poll_awaiting_uid", None)
+
+    # Hiển thị nội dung bình chọn với 4 nút đáp án
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"🅰️ {poll['option_a']}", callback_data=f"poll_answer_{poll_id}_A"),
+            InlineKeyboardButton(f"🅱️ {poll['option_b']}", callback_data=f"poll_answer_{poll_id}_B"),
+        ],
+        [
+            InlineKeyboardButton(f"🅲 {poll['option_c']}", callback_data=f"poll_answer_{poll_id}_C"),
+            InlineKeyboardButton(f"🅳 {poll['option_d']}", callback_data=f"poll_answer_{poll_id}_D"),
+        ],
+    ])
+
+    await update.message.reply_text(
+        get_text("poll_uid_received", user_lang, uid=uid_text),
+        parse_mode=ParseMode.HTML
+    )
+    await update.message.reply_text(
+        get_text("poll_choose_answer", user_lang,
+                 question=poll["question"],
+                 opt_a=poll["option_a"], opt_b=poll["option_b"],
+                 opt_c=poll["option_c"], opt_d=poll["option_d"]),
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboard
+    )
+
+
+async def _job_poll_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Job: Nhắc nhở khi poll sắp hết giờ (2 phút trước)."""
+    data = context.job.data
+    poll_id = data["poll_id"]
+
+    poll = get_poll_by_id(poll_id)
+    if not poll or poll["status"] != "active":
+        return
+
+    participants = get_poll_participant_count(poll_id)
+    reward = get_poll_reward(poll_id)
+
+    groups = get_all_groups()
+    for chat_id in groups:
+        try:
+            grp_lang = get_group_lang(chat_id)
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    get_text("poll_btn_join", grp_lang),
+                    callback_data=f"poll_join_{poll_id}"
+                )],
+            ])
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=get_text("poll_closing_soon", grp_lang,
+                              poll_id=poll_id, minutes=2,
+                              reward=reward, participants=participants),
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            logger.error(f"Poll reminder thất bại cho group {chat_id}: {e}")
+
+
+async def _job_close_poll(context: ContextTypes.DEFAULT_TYPE):
+    """Job: Tự động đóng poll khi hết giờ."""
+    data = context.job.data
+    poll_id = data["poll_id"]
+
+    poll = get_poll_by_id(poll_id)
+    if not poll or poll["status"] != "active":
+        return
+
+    # Đóng poll
+    conn = get_db()
+    conn.execute(
+        "UPDATE polls SET status = 'closed', closed_at = datetime('now') WHERE id = ?",
+        (poll_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    participants = get_poll_participant_count(poll_id)
+    reward = get_poll_reward(poll_id)
+
+    # Gửi thông báo đóng vào tất cả group
+    groups = get_all_groups()
+    for chat_id in groups:
+        try:
+            grp_lang = get_group_lang(chat_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=get_text("poll_auto_closed", grp_lang,
+                              poll_id=poll_id, question=poll["question"],
+                              participants=participants, reward=reward),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Poll close notification thất bại cho group {chat_id}: {e}")
+
+    logger.info(f"Poll #{poll_id} auto-closed. {participants} participants, {reward:.2f} USDT pool.")
+
+
+async def cmd_close_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /close_poll - Đóng sớm bình chọn."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Lấy poll_id từ args hoặc active poll
+    poll_id = None
+    if context.args:
+        try:
+            poll_id = int(context.args[0])
+        except ValueError:
+            pass
+
+    if not poll_id:
+        active = get_active_poll()
+        if active:
+            poll_id = active["id"]
+        else:
+            await update.message.reply_text(
+                get_text("poll_no_active", lang), parse_mode=ParseMode.HTML
+            )
+            return
+
+    poll = get_poll_by_id(poll_id)
+    if not poll:
+        await update.message.reply_text(
+            get_text("poll_not_found", lang, poll_id=poll_id), parse_mode=ParseMode.HTML
+        )
+        return
+
+    if poll["status"] != "active":
+        await update.message.reply_text(
+            get_text("poll_closed", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Đóng poll
+    conn = get_db()
+    conn.execute(
+        "UPDATE polls SET status = 'closed', closed_at = datetime('now') WHERE id = ?",
+        (poll_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    # Hủy các job liên quan
+    for job_name in [f"poll_close_{poll_id}", f"poll_reminder_{poll_id}"]:
+        jobs = context.application.job_queue.get_jobs_by_name(job_name)
+        for job in jobs:
+            job.schedule_removal()
+
+    participants = get_poll_participant_count(poll_id)
+    reward = get_poll_reward(poll_id)
+
+    await update.message.reply_text(
+        get_text("poll_force_closed", lang, poll_id=poll_id),
+        parse_mode=ParseMode.HTML
+    )
+
+    # Gửi thông báo đóng vào group
+    groups = get_all_groups()
+    for chat_id in groups:
+        try:
+            grp_lang = get_group_lang(chat_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=get_text("poll_auto_closed", grp_lang,
+                              poll_id=poll_id, question=poll["question"],
+                              participants=participants, reward=reward),
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Poll close notification thất bại cho group {chat_id}: {e}")
+
+    logger.info(f"Poll #{poll_id} force-closed by admin.")
+
+
+async def cmd_set_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /set_result [poll_id] A/B/C/D - Công bố đáp án đúng."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            get_text("poll_set_result_usage", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Parse args: /set_result [poll_id] ANSWER hoặc /set_result ANSWER
+    poll_id = None
+    answer = None
+
+    if len(context.args) >= 2:
+        try:
+            poll_id = int(context.args[0])
+            answer = context.args[1].upper()
+        except ValueError:
+            answer = context.args[0].upper()
+    elif len(context.args) == 1:
+        answer = context.args[0].upper()
+
+    if answer not in ("A", "B", "C", "D"):
+        await update.message.reply_text(
+            get_text("poll_invalid_answer", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Nếu không có poll_id, lấy poll gần nhất đã closed
+    if not poll_id:
+        conn = get_db()
+        row = conn.execute(
+            "SELECT id FROM polls WHERE status = 'closed' AND correct_answer IS NULL "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if row:
+            poll_id = row["id"]
+        else:
+            await update.message.reply_text(
+                get_text("poll_no_active", lang), parse_mode=ParseMode.HTML
+            )
+            return
+
+    poll = get_poll_by_id(poll_id)
+    if not poll:
+        await update.message.reply_text(
+            get_text("poll_not_found", lang, poll_id=poll_id), parse_mode=ParseMode.HTML
+        )
+        return
+
+    if poll["status"] == "active":
+        await update.message.reply_text(
+            get_text("poll_not_closed", lang, poll_id=poll_id), parse_mode=ParseMode.HTML
+        )
+        return
+
+    if poll["correct_answer"]:
+        await update.message.reply_text(
+            get_text("poll_already_has_result", lang, poll_id=poll_id), parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Lưu đáp án đúng
+    conn = get_db()
+    conn.execute(
+        "UPDATE polls SET correct_answer = ?, status = 'completed', result_at = datetime('now') WHERE id = ?",
+        (answer, poll_id)
+    )
+
+    # Tính toán kết quả
+    participants = conn.execute(
+        "SELECT * FROM poll_participants WHERE poll_id = ?", (poll_id,)
+    ).fetchall()
+
+    reward = poll["base_reward"] + (POLL_PER_USER_BONUS * len(participants))
+
+    winners = [p for p in participants if p["answer"] == answer]
+    per_person = reward / len(winners) if winners else 0
+
+    # Cập nhật thưởng cho winners
+    for w in winners:
+        conn.execute(
+            "UPDATE poll_participants SET is_winner = 1, reward = ? WHERE id = ?",
+            (per_person, w["id"])
+        )
+
+    conn.commit()
+    conn.close()
+
+    # Tạo danh sách người thắng
+    answer_map = {"A": poll["option_a"], "B": poll["option_b"],
+                  "C": poll["option_c"], "D": poll["option_d"]}
+    correct_text = answer_map.get(answer, "")
+
+    counts = get_poll_answer_counts(poll_id)
+
+    if winners:
+        winner_list = get_text("poll_winner_header", lang) + "\n"
+        for i, w in enumerate(winners[:50], 1):
+            name = w["full_name"] or w["username"] or f"User#{w['user_id']}"
+            username = w["username"] or "N/A"
+            winner_list += f"{i}. " + get_text("poll_winner_item", lang,
+                                                name=name, username=username,
+                                                uid=w["tovest_uid"], reward=per_person) + "\n"
+        if len(winners) > 50:
+            winner_list += f"\n... và {len(winners) - 50} người khác."
+    else:
+        winner_list = get_text("poll_result_no_winner", lang)
+
+    result_text = get_text("poll_result_announcement", lang,
+                           poll_id=poll_id, question=poll["question"],
+                           correct_label=answer, correct_text=correct_text,
+                           opt_a=poll["option_a"], count_a=counts["A"],
+                           opt_b=poll["option_b"], count_b=counts["B"],
+                           opt_c=poll["option_c"], count_c=counts["C"],
+                           opt_d=poll["option_d"], count_d=counts["D"],
+                           reward=reward, winners=len(winners),
+                           per_person=per_person, winner_list=winner_list)
+
+    # Gửi kết quả vào admin chat
+    await update.message.reply_text(result_text, parse_mode=ParseMode.HTML)
+
+    # Gửi kết quả vào tất cả group
+    groups = get_all_groups()
+    for chat_id in groups:
+        try:
+            grp_lang = get_group_lang(chat_id)
+            grp_counts = counts  # Same counts
+
+            if winners:
+                grp_winner_list = get_text("poll_winner_header", grp_lang) + "\n"
+                for i, w in enumerate(winners[:50], 1):
+                    name = w["full_name"] or w["username"] or f"User#{w['user_id']}"
+                    username = w["username"] or "N/A"
+                    grp_winner_list += f"{i}. " + get_text("poll_winner_item", grp_lang,
+                                                            name=name, username=username,
+                                                            uid=w["tovest_uid"], reward=per_person) + "\n"
+                if len(winners) > 50:
+                    grp_winner_list += f"\n... và {len(winners) - 50} người khác."
+            else:
+                grp_winner_list = get_text("poll_result_no_winner", grp_lang)
+
+            grp_result = get_text("poll_result_announcement", grp_lang,
+                                  poll_id=poll_id, question=poll["question"],
+                                  correct_label=answer, correct_text=correct_text,
+                                  opt_a=poll["option_a"], count_a=grp_counts["A"],
+                                  opt_b=poll["option_b"], count_b=grp_counts["B"],
+                                  opt_c=poll["option_c"], count_c=grp_counts["C"],
+                                  opt_d=poll["option_d"], count_d=grp_counts["D"],
+                                  reward=reward, winners=len(winners),
+                                  per_person=per_person, winner_list=grp_winner_list)
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=grp_result,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            logger.error(f"Gửi kết quả poll vào group {chat_id} thất bại: {e}")
+
+    logger.info(f"Poll #{poll_id} result: {answer}. {len(winners)} winners, {per_person:.2f} USDT each.")
+
+
+async def cmd_export_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /export_poll [poll_id] - Xuất CSV dữ liệu bình chọn."""
+    lang = chat_lang(update)
+    if not is_admin(update.effective_user):
+        await update.message.reply_text(get_text("admin_no_perm", lang), parse_mode=ParseMode.HTML)
+        return
+
+    # Lấy poll_id
+    poll_id = None
+    if context.args:
+        try:
+            poll_id = int(context.args[0])
+        except ValueError:
+            pass
+
+    if not poll_id:
+        latest = get_latest_poll()
+        if latest:
+            poll_id = latest["id"]
+        else:
+            await update.message.reply_text(
+                get_text("poll_export_no_data", lang), parse_mode=ParseMode.HTML
+            )
+            return
+
+    poll = get_poll_by_id(poll_id)
+    if not poll:
+        await update.message.reply_text(
+            get_text("poll_not_found", lang, poll_id=poll_id), parse_mode=ParseMode.HTML
+        )
+        return
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT pp.user_id, pp.username, pp.full_name, pp.tovest_uid, pp.answer, "
+        "pp.is_winner, pp.reward, pp.created_at "
+        "FROM poll_participants pp WHERE pp.poll_id = ? "
+        "ORDER BY pp.created_at ASC",
+        (poll_id,)
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text(
+            get_text("poll_export_no_data", lang), parse_mode=ParseMode.HTML
+        )
+        return
+
+    answer_map = {"A": poll["option_a"], "B": poll["option_b"],
+                  "C": poll["option_c"], "D": poll["option_d"]}
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "poll_id", "question", "user_id", "username", "full_name",
+        "tovest_uid", "answer_letter", "answer_text", "correct_answer",
+        "is_winner", "reward_usdt", "voted_at"
+    ])
+    for r in rows:
+        writer.writerow([
+            poll_id,
+            poll["question"],
+            r["user_id"],
+            r["username"],
+            r["full_name"],
+            r["tovest_uid"],
+            r["answer"],
+            answer_map.get(r["answer"], ""),
+            poll.get("correct_answer", ""),
+            "WIN" if r["is_winner"] else "LOSE",
+            f"{r['reward']:.2f}",
+            r["created_at"]
+        ])
+
+    output.seek(0)
+    buf = io.BytesIO(output.getvalue().encode("utf-8-sig"))
+    buf.name = f"poll_{poll_id}_{vn_today()}.csv"
+
+    await update.message.reply_document(
+        document=buf,
+        caption=get_text("poll_export_caption", lang, poll_id=poll_id, date=vn_today())
+    )
+
+
+# ============================================================
 # SCHEDULED JOBS (Tự động gửi vào group)
 # ============================================================
 
@@ -2377,10 +3671,18 @@ async def job_weekly_report(context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def on_new_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Tự động lưu group khi bot được thêm vào hoặc có tin nhắn."""
+    """Tự động lưu group và user khi có tin nhắn trong group (auto re-register sau redeploy)."""
     chat = update.effective_chat
+    user = update.effective_user
     if chat and chat.type in ("group", "supergroup"):
         save_group(chat.id, chat.title or "")
+    # Tự động lưu user nếu chưa có trong DB
+    if user and not user.is_bot:
+        get_or_create_user(
+            user.id,
+            user.username or "",
+            user.full_name or ""
+        )
 
 
 # ============================================================
@@ -2401,7 +3703,6 @@ def _restore_scheduled_posts(jq):
     Khôi phục các bài hẹn giờ còn pending từ DB khi bot restart.
     Nếu thời gian đã qua thì đánh dấu 'expired', còn lại thì đăng ký lại job.
     """
-    import json as _json
     conn = get_db()
     rows = conn.execute(
         "SELECT id, content, scheduled_time, links, target_groups FROM scheduled_posts WHERE status = 'pending'"
@@ -2419,13 +3720,13 @@ def _restore_scheduled_posts(jq):
             links = None
             if r["links"]:
                 try:
-                    links = _json.loads(r["links"])
+                    links = json.loads(r["links"])
                 except Exception:
                     pass
             target_groups = None
             if r["target_groups"]:
                 try:
-                    target_groups = _json.loads(r["target_groups"])
+                    target_groups = json.loads(r["target_groups"])
                 except Exception:
                     pass
 
@@ -2452,12 +3753,62 @@ def _restore_scheduled_posts(jq):
             logger.error(f"Lỗi khôi phục scheduled post #{r['id']}: {e}")
 
 
+def _restore_active_polls(jq):
+    """
+    Khôi phục các poll đang active từ DB khi bot restart.
+    Nếu thời gian đã qua thì đóng poll, còn lại thì đăng ký lại job close.
+    """
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM polls WHERE status = 'active'"
+    ).fetchall()
+    conn.close()
+
+    for r in rows:
+        try:
+            poll = dict(r)
+            time_left = get_poll_time_left_seconds(poll)
+
+            if time_left <= 0:
+                # Đã hết giờ → đóng poll
+                conn2 = get_db()
+                conn2.execute(
+                    "UPDATE polls SET status = 'closed', closed_at = datetime('now') WHERE id = ?",
+                    (poll["id"],)
+                )
+                conn2.commit()
+                conn2.close()
+                logger.info(f"Poll #{poll['id']} đã hết giờ khi restart, đã đóng.")
+            else:
+                # Đăng ký lại job close
+                jq.run_once(
+                    _job_close_poll,
+                    when=time_left,
+                    name=f"poll_close_{poll['id']}",
+                    data={"poll_id": poll["id"]}
+                )
+                # Đăng ký reminder nếu còn > 2 phút
+                if time_left > 120:
+                    jq.run_once(
+                        _job_poll_reminder,
+                        when=time_left - 120,
+                        name=f"poll_reminder_{poll['id']}",
+                        data={"poll_id": poll["id"]}
+                    )
+                logger.info(f"Restored active poll #{poll['id']}, {time_left:.0f}s remaining.")
+        except Exception as e:
+            logger.error(f"Lỗi khôi phục poll #{r['id']}: {e}")
+
+
 def setup_jobs(app: Application):
-    """Thiết lập tất cả scheduled jobs + khôi phục bài hẹn giờ từ DB."""
+    """Thiết lập tất cả scheduled jobs + khôi phục bài hẹn giờ và polls từ DB."""
     jq = app.job_queue
 
     # --- Khôi phục scheduled posts từ DB (sau khi restart) ---
     _restore_scheduled_posts(jq)
+
+    # --- Khôi phục active polls từ DB (sau khi restart) ---
+    _restore_active_polls(jq)
 
     # Event link: 08:00, 12:00, 18:00, 21:00 VN
     for hour in [8, 12, 18, 21]:
@@ -2503,6 +3854,10 @@ async def post_init(app: Application):
         BotCommand("rules", "Program rules"),
         BotCommand("event", "Event link"),
         BotCommand("setlang", "Set language (admin)"),
+        BotCommand("create_poll", "Create prediction (admin)"),
+        BotCommand("close_poll", "Close prediction (admin)"),
+        BotCommand("set_result", "Set poll result (admin)"),
+        BotCommand("export_poll", "Export poll data (admin)"),
         BotCommand("post", "Post to groups (admin)"),
         BotCommand("schedule_post", "Schedule post (admin)"),
         BotCommand("scheduled_posts", "View scheduled posts (admin)"),
@@ -2560,11 +3915,28 @@ def main():
     app.add_handler(CommandHandler("check_error", cmd_check_error))
     app.add_handler(CommandHandler("list_groups", cmd_list_groups))
 
+    # Poll/Prediction commands (admin)
+    app.add_handler(CommandHandler("create_poll", cmd_create_poll))
+    app.add_handler(CommandHandler("close_poll", cmd_close_poll))
+    app.add_handler(CommandHandler("set_result", cmd_set_result))
+    app.add_handler(CommandHandler("export_poll", cmd_export_poll))
+
     # Callback handlers (inline buttons)
     app.add_handler(CallbackQueryHandler(callback_checkin, pattern="^checkin$"))
     app.add_handler(CallbackQueryHandler(callback_rules, pattern="^rules$"))
     app.add_handler(CallbackQueryHandler(callback_event_click, pattern="^event_click$"))
     app.add_handler(CallbackQueryHandler(callback_redeem, pattern="^redeem$"))
+
+    # Poll callback handlers
+    app.add_handler(CallbackQueryHandler(callback_poll_join, pattern=r"^poll_join_\d+$"))
+    app.add_handler(CallbackQueryHandler(callback_poll_refresh, pattern=r"^poll_refresh_\d+$"))
+    app.add_handler(CallbackQueryHandler(callback_poll_answer, pattern=r"^poll_answer_\d+_[ABCD]$"))
+
+    # Private message handler (for UID input during poll registration)
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+        handle_private_message
+    ), group=0)
 
     # Auto-detect group (bắt mọi message trong group để lưu chat_id)
     app.add_handler(MessageHandler(
